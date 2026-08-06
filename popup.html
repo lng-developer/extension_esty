@@ -1,0 +1,363 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>LNG Etsy Worker</title>
+  <style>
+    body {
+      width: 380px;
+      padding: 14px;
+      font-family: Arial, sans-serif;
+      background: #111111;
+      color: #ffffff;
+    }
+
+    h3 {
+      margin-top: 0;
+      color: #ffffff;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: #ffffff;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #dc2626;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 8px;
+      box-sizing: border-box;
+      background: #111111;
+      color: #ffffff;
+    }
+
+    input[type="text"]:focus {
+      outline: 2px solid rgba(220, 38, 38, 0.48);
+      border-color: #dc2626;
+    }
+
+    .row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .row>* {
+      flex: 1;
+    }
+
+    .main-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #dc2626;
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #dc2626;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    pre {
+      margin-top: 12px;
+      padding: 10px;
+      background: #111111;
+      border-radius: 8px;
+      max-height: 280px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-size: 11px;
+      color: #ffffff;
+      border: 1px solid #dc2626;
+    }
+
+    .hint {
+      font-size: 10px;
+      color: #ffffff;
+      margin-top: -4px;
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      margin: 12px 0 2px;
+      font-size: 13px;
+      font-weight: 800;
+      color: #ffffff;
+    }
+
+    .section-subtitle {
+      margin-bottom: 8px;
+      font-size: 10px;
+      color: #ffffff;
+    }
+
+    .mini-panel {
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid #dc2626;
+      border-radius: 8px;
+      background: #111111;
+      font-size: 11px;
+      color: #ffffff;
+    }
+
+    .mini-item {
+      padding: 7px 0;
+      border-top: 1px solid #dc2626;
+    }
+
+    .mini-item:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .muted {
+      color: #ffffff;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .badge-on {
+      background: #111111;
+      color: #ffffff;
+    }
+
+    .badge-off {
+      background: #dc2626;
+      color: #ffffff;
+    }
+
+    .warn {
+      color: #dc2626;
+      font-weight: 700;
+    }
+
+    .error-text {
+      color: #dc2626;
+      font-weight: 700;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      background: rgba(17, 17, 17, 0.64);
+      box-sizing: border-box;
+    }
+
+    .modal-box {
+      width: 340px;
+      max-width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      border-radius: 12px;
+      background: #111111;
+      box-shadow: 0 18px 45px rgba(17, 17, 17, 0.28);
+      padding: 12px;
+      box-sizing: border-box;
+      border: 1px solid #dc2626;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+    }
+
+    .modal-header p {
+      margin: 3px 0 0;
+      color: #ffffff;
+      font-size: 11px;
+    }
+
+    .modal-kicker {
+      margin-bottom: 2px;
+      color: #dc2626;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .modal-close {
+      width: auto;
+      min-width: 32px;
+      padding: 6px 9px;
+      border-radius: 8px;
+      background: #111111;
+      color: #ffffff;
+    }
+
+    .modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .auto-config-summary,
+    .auto-config-list {
+      margin-bottom: 10px;
+      font-size: 11px;
+    }
+
+    .auto-config-section-title {
+      margin: 10px 0 6px;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .auto-config-card {
+      padding: 8px;
+      margin-bottom: 8px;
+      border: 1px solid #dc2626;
+      border-radius: 8px;
+      background: #111111;
+      color: #ffffff;
+      font-size: 11px;
+    }
+
+    .auto-config-card:last-child {
+      margin-bottom: 0;
+    }
+
+    .auto-config-meta {
+      margin-top: 2px;
+      color: #ffffff;
+    }
+  </style>
+</head>
+
+<body>
+  <h3>LNG Etsy Worker</h3>
+
+  <label for="mongoShopId">Mongo Shop ID (ObjectId 24-hex)</label>
+  <input id="mongoShopId" type="text" placeholder="ví dụ: 6881aba9c1bbdfc541b5cd4d" maxlength="24" />
+  <div class="hint">BE yêu cầu ObjectId, không phải số shop Etsy.</div>
+
+  <label for="backendUrl">Backend URL</label>
+  <input id="backendUrl" type="text" placeholder="https://api.lngmerch.co/api/etsy/" />
+  <div class="hint">Endpoint POST tạo từng order.</div>
+
+  <div class="main-actions">
+    <button id="btnSaveCfg" class="secondary">💾 Save config</button>
+    <button id="btnOpenTriggerModal">🖱️ Trigger</button>
+    <button id="btnSocketConnect">🟢 Connect Socket</button>
+    <button id="btnSocketStatus" class="secondary">🔌Socket Status</button>
+    <button id="btnSocketDisconnect" class="secondary">🔴 Disconnect Socket</button>
+    <button id="btnOpenAutoConfig" class="secondary">🤖 Auto Config</button>
+    <button id="btnEtsyMessageSyncDebug" class="secondary">💬 Test Messages</button>
+    <button id="btnEtsyMessageMonitorTick" class="secondary">🔁 Test Message Monitor</button>
+  </div>
+
+  <div id="triggerModalOverlay" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div>
+          <div class="modal-kicker">Manual Tools</div>
+          <h3>Trigger</h3>
+          <p>Chạy các thao thác bằng tay.</p>
+        </div>
+        <button id="btnCloseTriggerModal" class="modal-close">Đóng</button>
+      </div>
+
+      <button id="btnGetOrders">Get Etsy Orders &amp; Push</button>
+
+  <div style="height:8px;"></div>
+  <button id="btnSyncEtsyListings" class="secondary">Sync Etsy Listings</button>
+
+  <hr style="margin:14px 0;border:0;border-top:1px solid #dc2626;" />
+
+  <label for="trackingOrderId">Etsy Order ID</label>
+  <input id="trackingOrderId" type="text" placeholder="ví dụ: 1234567890" />
+
+  <label for="trackingNumber">Tracking Number</label>
+  <input id="trackingNumber" type="text" placeholder="ví dụ: YT1234567891234567" />
+
+  <button id="btnUploadTracking">Upload Tracking Etsy</button>
+
+  <hr style="margin:14px 0;border:0;border-top:1px solid #dc2626;" />
+
+
+  <label for="etsyAdsDate">Etsy Ads Date</label>
+  <input id="etsyAdsDate" type="text" placeholder="YYYY-MM-DD, ví dụ: 2026-05-03" />
+
+  <label for="etsyAdsBackendUrl">Etsy Ads Backend URL</label>
+  <input id="etsyAdsBackendUrl" type="text" placeholder="https://api.lngmerch.co/api/etsy-ads" />
+
+  <button id="btnImportEtsyAds">Kéo Etsy Ads Spend</button>
+  <div style="height:8px;"></div>
+  <button id="btnImportEtsyAdsFull" class="secondary">Sync Listings + Kéo Etsy Ads</button>
+    </div>
+  </div>
+
+  <pre id="log">Ready.</pre>
+
+  <div id="autoConfigModalOverlay" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div>
+          <div class="modal-kicker">Automation Center</div>
+          <h3>Auto Config</h3>
+          <p>Theo dõi automation đang hoạt động từ BE.</p>
+        </div>
+        <button id="btnCloseAutoConfigModal" class="modal-close">✕</button>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btnAutoConfigStatus" class="secondary">Check Status</button>
+        <button id="btnReloadAutoConfig">Reload Auto Config</button>
+      </div>
+
+      <div id="autoConfigSummary" class="auto-config-summary"></div>
+
+      <div class="auto-config-section-title">Config Records</div>
+      <div id="autoConfigList" class="auto-config-list"></div>
+
+      <div class="auto-config-section-title">Chrome Alarms</div>
+      <div id="autoConfigAlarmList" class="auto-config-list"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

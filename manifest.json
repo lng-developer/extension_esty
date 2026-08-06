@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "LNG Etsy Worker",
+  "version": "1.1.0",
+  "description": "Get Etsy orders, upload Etsy tracking, and import Amazon Ads spend.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "alarms",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://www.etsy.com/*",
+    "https://advertising.amazon.com/*",
+    "https://api.lngmerch.co/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "LNG Worker"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.lngmerch.co http://localhost:5000 wss://api.lngmerch.co ws://localhost:5000"
+  }
+}
