@@ -2765,7 +2765,10 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
             backendOrders,
             maxAutoDomDetailOrders,
             forceDomCustomFileScan,
-            waitMs: Number(payload.domDetailWaitMs || payload.waitMs || 3000)
+            waitMs: Number(payload.domDetailWaitMs || payload.waitMs || 3000),
+            mongoShopId,
+            taskId,
+            taskType
         });
         domCustomFileSummary = {
             ...buildCustomFileSummary(backendOrders),
@@ -3904,7 +3907,10 @@ async function runAutoUploadDomDetailScan({
     backendOrders,
     maxAutoDomDetailOrders = 10,
     forceDomCustomFileScan = false,
-    waitMs = 3000
+    waitMs = 3000,
+    mongoShopId,
+    taskId,
+    taskType = "IMPORT_ORDERS"
 } = {}) {
     const candidates = findOrdersNeedingDomCustomFileScan(backendOrders, {
         forceDomCustomFileScan
@@ -3930,11 +3936,23 @@ async function runAutoUploadDomDetailScan({
     });
 
     for (const candidate of limitedCandidates) {
-        console.log("[LNG][sw][CUSTOM_FILE_AUTO_DETAIL][SCAN_START]", {
+        const logData = {
             orderId: candidate.orderId,
             transactionId: candidate.transactionId,
             listingId: candidate.listingId,
             reason: candidate.reason
+        };
+        console.log("[LNG][sw][CUSTOM_FILE_AUTO_DETAIL][SCAN_START]", {
+            ...logData
+        });
+        await logServiceEvent({
+            service: "IMPORT_ORDERS",
+            logType: "task_processing",
+            message: "IMPORT_ORDERS custom-file scan started",
+            mongoShopId,
+            taskId,
+            taskType,
+            rawData: logData
         });
 
         try {
@@ -3952,13 +3970,38 @@ async function runAutoUploadDomDetailScan({
             const mergeResult = mergeDomCustomFilesIntoBackendOrders(backendOrders, candidate, files);
             summary.scannedOrders += 1;
             summary.filesMerged += mergeResult.addedFiles || 0;
+            await logServiceEvent({
+                service: "IMPORT_ORDERS",
+                logType: "info",
+                message: "IMPORT_ORDERS custom-file scan completed",
+                mongoShopId,
+                taskId,
+                taskType,
+                rawData: {
+                    ...logData,
+                    filesFound: files.length,
+                    filesMerged: mergeResult.addedFiles || 0
+                }
+            });
         } catch (error) {
             summary.failedScans += 1;
+            const errorMessage = error?.message || String(error);
             console.warn("[LNG][sw][CUSTOM_FILE_AUTO_DETAIL][SCAN_ERROR]", {
-                orderId: candidate.orderId,
-                transactionId: candidate.transactionId,
-                listingId: candidate.listingId,
-                message: error?.message || String(error)
+                ...logData,
+                message: errorMessage
+            });
+            await logServiceEvent({
+                service: "IMPORT_ORDERS",
+                logType: "error",
+                level: "error",
+                message: "IMPORT_ORDERS custom-file scan failed",
+                mongoShopId,
+                taskId,
+                taskType,
+                rawData: {
+                    ...logData,
+                    errorMessage
+                }
             });
         }
     }

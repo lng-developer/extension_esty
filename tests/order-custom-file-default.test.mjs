@@ -19,3 +19,14 @@ test("opens Etsy order detail from the working sold-orders route", async () => {
   assert.match(match[0], /your\/orders\/sold\?ref=seller-platform-mcnav&order_id=/);
   assert.doesNotMatch(match[0], /your\/orders\/sold\/new/);
 });
+
+test("reports custom-file scan outcomes to the existing portal log API", async () => {
+  const source = await readFile(new URL("../service-worker.js", import.meta.url), "utf8");
+  const match = source.match(/async function runAutoUploadDomDetailScan\([\s\S]*?(?=\r?\n\r?\nfunction mergeDomCustomFilesIntoBackendOrders)/);
+
+  assert.ok(match, "custom-file scanner should exist");
+  assert.match(match[0], /IMPORT_ORDERS custom-file scan started/);
+  assert.match(match[0], /IMPORT_ORDERS custom-file scan completed/);
+  assert.match(match[0], /IMPORT_ORDERS custom-file scan failed/);
+  assert.doesNotMatch(match[0], /downloadUrl|previewUrl|buyerName/);
+});
