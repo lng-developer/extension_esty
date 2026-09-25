@@ -19,7 +19,6 @@ const ALLOWED_LOG_TYPES = new Set([
 ]);
 const ALLOWED_LEVELS = new Set(["debug", "info", "warn", "error"]);
 const SERVICE_LOG_PREFIXES = {
-    AMAZON_ADS: "[AMAZON_ADS]",
     AUTO_CONFIG: "[AUTO_CONFIG]",
     ETSY_AUTO_CONFIG: "[AUTO_CONFIG]",
     ETSY_ADS: "[ETSY_ADS]",

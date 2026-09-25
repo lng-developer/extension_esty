@@ -163,7 +163,7 @@ async function getEtsyOrders(payload = {}) {
     const maxTotalOrders = Math.max(1, Math.min(Number(payload.maxTotalOrders || payload.limit || 50) || 50, 200));
     const includeCustomizations = payload.includeCustomizations !== false;
     const includeCustomFiles = payload.includeCustomFiles !== false;
-    const customFileDetailMode = payload.customFileDetailMode || "safe_debug";
+    const customFileDetailMode = payload.customFileDetailMode || "auto_upload_detail";
     const targetOrderId = String(payload.targetOrderId || payload.orderId || "").trim();
 
     console.log("[LNG][content] getEtsyOrders start", {
@@ -2348,7 +2348,7 @@ async function enrichOrdersWithCustomData({
     shopId,
     includeCustomizations = true,
     includeCustomFiles = true,
-    customFileDetailMode = "safe_debug",
+    customFileDetailMode = "auto_upload_detail",
     targetOrderId = ""
 }) {
     let detailFetchFailedCount = 0;
@@ -2984,7 +2984,6 @@ function normalizeCarrierInput(value) {
     if (!raw) return "";
     if (upper.includes("YUN") || upper.includes("YT")) return "Yun Express";
     if (upper.includes("YANWEN") || upper === "UK" || upper === "UL") return "Yanwen";
-    if (upper.includes("AMAZON") || upper === "TBA") return "Amazon Shipping";
     if (upper.includes("USPS")) return "USPS";
 
     return raw;
@@ -2996,7 +2995,6 @@ function inferCarrierFromTrackingNumber(trackingNumber) {
     if (value.startsWith("92") || value.startsWith("42")) return "USPS";
     if (value.startsWith("UK") || value.startsWith("UL")) return "Yanwen";
     if (value.startsWith("YT")) return "Yun Express";
-    if (value.startsWith("TBA")) return "Amazon Shipping";
 
     return "";
 }

@@ -25,15 +25,6 @@ const CONFIG = {
 
 console.log("[LNG][sw] service-worker.js loaded", CONFIG);
 
-const ADS_HEADER_KEYS = {
-    "amazon-ads-account-id": "adsAccountId",
-    "amazon-advertising-api-advertiserid": "adsAdvertiserId",
-    "amazon-advertising-api-clientid": "adsClientId",
-    "amazon-advertising-api-marketplaceid": "adsMarketplaceId",
-    "amazon-advertising-api-csrf-data": "adsCsrfData",
-    "amazon-advertising-api-csrf-token": "adsCsrfToken"
-};
-
 const socketTaskLocks = new Set();
 const autoUploadTrackingLocks = new Set();
 let uploadTrackingQueue = Promise.resolve();
@@ -100,10 +91,6 @@ function getServiceLogPrefixFromMessage(message = "") {
 
     if (value.includes("ETSY_MESSAGE") || value.includes("MESSAGE_SYNC")) {
         return "[ETSY_MESSAGE]";
-    }
-
-    if (value.includes("AMAZON")) {
-        return "[AMAZON_ADS]";
     }
 
     return "[SOCKET_TASK]";
@@ -317,7 +304,6 @@ function normalizeEtsyCarrierName(value) {
     if (!raw) return "";
     if (upper.includes("YUN") || upper.includes("YT")) return "Yun Express";
     if (upper.includes("YANWEN") || upper === "UK" || upper === "UL") return "Yanwen";
-    if (upper.includes("AMAZON") || upper === "TBA") return "Amazon Shipping";
     if (upper.includes("USPS")) return "USPS";
 
     return raw;
@@ -332,7 +318,6 @@ function inferEtsyTrackingCarrier(trackingNumber, explicitCarrier = "") {
     if (value.startsWith("92") || value.startsWith("42")) return "USPS";
     if (value.startsWith("UK") || value.startsWith("UL")) return "Yanwen";
     if (value.startsWith("YT")) return "Yun Express";
-    if (value.startsWith("TBA")) return "Amazon Shipping";
 
     return "";
 }
@@ -1869,7 +1854,7 @@ async function handleImportOrdersSocketTask(task) {
     const maxTotalOrders = Math.max(1, Math.min(Number(task?.payload?.maxTotalOrders || task?.payload?.limit || 50) || 50, 200));
     const includeCustomizations = task?.payload?.includeCustomizations !== false;
     const includeCustomFiles = task?.payload?.includeCustomFiles !== false;
-    const customFileDetailMode = task?.payload?.customFileDetailMode || "safe_debug";
+    const customFileDetailMode = task?.payload?.customFileDetailMode || "auto_upload_detail";
     const targetOrderId = String(task?.payload?.targetOrderId || task?.payload?.orderId || "").trim();
     const maxAutoDomDetailOrders = Number(task?.payload?.maxAutoDomDetailOrders || 10);
     const forceDomCustomFileScan = task?.payload?.forceDomCustomFileScan === true;
@@ -2577,24 +2562,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
-    if (message.action === "AMAZON_ADS_IMPORT_DAY") {
-        handleAmazonAdsImportDay(message.payload || {})
-            .then((data) => {
-                console.log("[LNG][sw] AMAZON_ADS_IMPORT_DAY done", data);
-                sendResponse({ ok: true, data });
-            })
-            .catch((error) => {
-                console.error("[LNG][sw][AMAZON_ADS_IMPORT_DAY_ERROR]", error);
-
-                sendResponse({
-                    ok: false,
-                    message: error.message || "Amazon Ads import failed"
-                });
-            });
-
-        return true;
-    }
-
     if (message.action === "ETSY_ADS_RECON_LOG") {
         const tag = message.payload?.tag || "UNKNOWN";
         const data = message.payload?.data || {};
@@ -2704,122 +2671,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     });
 });
 
-function collectAdsHeaders(requestHeaders = []) {
-    const found = {};
-
-    for (const h of requestHeaders || []) {
-        const key = ADS_HEADER_KEYS[String(h.name || "").toLowerCase()];
-
-        if (key && h.value) {
-            found[key] = h.value;
-        }
-    }
-
-    return found;
-}
-
-async function saveAdsHeadersIfAny(found) {
-    const keys = Object.keys(found || {});
-
-    if (!keys.length) return;
-
-    const toSave = {
-        ...found,
-        adsHeaderLastSeen: Date.now()
-    };
-
-    await chrome.storage.local.set(toSave);
-
-    console.log("[LNG][sw][ADS-AUTH] headers captured", {
-        keys
-    });
-}
-
-chrome.webRequest.onBeforeSendHeaders.addListener(
-    (details) => {
-        try {
-            if (!details?.url?.startsWith("https://advertising.amazon.com/")) return;
-
-            const found = collectAdsHeaders(details.requestHeaders || {});
-            saveAdsHeadersIfAny(found);
-        } catch (error) {
-            console.warn("[LNG][sw][ADS-AUTH] capture error", error);
-        }
-    },
-    {
-        urls: ["https://advertising.amazon.com/*"]
-    },
-    ["requestHeaders", "extraHeaders"]
-);
-
-// chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-//     console.log("[LNG][sw] onMessage", { action: message?.action, sender: sender?.id });
-
-//     if (message.action === "ETSY_GET_ORDERS_AND_PUSH" || message.action === "ETSY_GET_ORDERS") {
-//         handleGetEtsyOrdersAndPush(message.payload || {})
-//             .then((data) => {
-//                 console.log("[LNG][sw] ETSY_GET_ORDERS_AND_PUSH done", data);
-//                 sendResponse({ ok: true, data });
-//             })
-//             .catch((error) => {
-//                 console.error("[LNG][sw][ERROR]", error);
-//                 sendResponse({ ok: false, message: error.message || "Failed" });
-//             });
-
-//         return true;
-//     }
-//     if (message.action === "ETSY_UPLOAD_TRACKING") {
-//         handleUploadTrackingToEtsy(message.payload || {})
-//             .then((data) => {
-//                 console.log("[LNG][sw] ETSY_UPLOAD_TRACKING done", data);
-//                 sendResponse({ ok: true, data });
-//             })
-//             .catch((error) => {
-//                 console.error("[LNG][sw][ETSY_UPLOAD_TRACKING_ERROR]", error);
-//                 sendResponse({
-//                     ok: false,
-//                     message: error.message || "Upload tracking failed"
-//                 });
-//             });
-
-//         return true;
-//     }
-//     if (message.action === "AMAZON_ADS_IMPORT_DAY") {
-//         handleAmazonAdsImportDay(message.payload || {})
-//             .then((data) => {
-//                 console.log("[LNG][sw] AMAZON_ADS_IMPORT_DAY done", data);
-//                 sendResponse({ ok: true, data });
-//             })
-//             .catch((error) => {
-//                 console.error("[LNG][sw][AMAZON_ADS_IMPORT_DAY_ERROR]", error);
-
-//                 sendResponse({
-//                     ok: false,
-//                     message: error.message || "Amazon Ads import failed"
-//                 });
-//             });
-
-//         return true;
-//     }
-//     if (message.action === "ETSY_ADS_IMPORT_DAY") {
-//         handleEtsyAdsImportDay(message.payload || {})
-//             .then((data) => {
-//                 console.log("[LNG][sw] ETSY_ADS_IMPORT_DAY done", data);
-//                 sendResponse({ ok: true, data });
-//             })
-//             .catch((error) => {
-//                 console.error("[LNG][sw][ETSY_ADS_IMPORT_DAY_ERROR]", error);
-
-//                 sendResponse({
-//                     ok: false,
-//                     message: error.message || "Etsy Ads import failed"
-//                 });
-//             });
-
-//         return true;
-//     }
-// });
-
 async function handleGetEtsyOrdersAndPush(payload = {}) {
     const mongoShopId = String(payload.mongoShopId || "").trim();
     const backendUrl = String(payload.backendUrl || CONFIG.DEFAULT_BACKEND_URL).trim();
@@ -2841,7 +2692,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         targetOrderId,
         pageSize,
         maxTotalOrders,
-        customFileDetailMode: payload.customFileDetailMode || "safe_debug",
+        customFileDetailMode: payload.customFileDetailMode || "auto_upload_detail",
         maxAutoDomDetailOrders,
         forceDomCustomFileScan
     });
@@ -2872,7 +2723,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         maxTotalOrders,
         includeCustomizations: payload.includeCustomizations !== false,
         includeCustomFiles: payload.includeCustomFiles !== false,
-        customFileDetailMode: payload.customFileDetailMode || "safe_debug",
+        customFileDetailMode: payload.customFileDetailMode || "auto_upload_detail",
         targetOrderId: targetOrderId || ""
     };
     const contentResponse = await chrome.tabs.sendMessage(tab.id, {
@@ -4834,316 +4685,6 @@ async function sendMessageToTabWithRetry(tabId, message, options = {}) {
     }
 
     throw new Error(`Failed to send message to tab ${tabId}`);
-}
-
-const amazonAdsJobLocks = new Map();
-
-async function handleAmazonAdsImportDay(payload) {
-    const date = String(payload.date || "").trim();
-    const mongoShopId = String(payload.mongoShopId || "").trim();
-    const adsBackendUrl = String(payload.adsBackendUrl || CONFIG.DEFAULT_ADS_BACKEND_URL).trim();
-
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        throw new Error("Ads date phải đúng định dạng YYYY-MM-DD");
-    }
-
-    if (!mongoShopId || !/^[a-f0-9]{24}$/i.test(mongoShopId)) {
-        throw new Error("Thiếu mongoShopId hợp lệ");
-    }
-
-    const lockKey = `ads:${mongoShopId}:${date}`;
-
-    if (amazonAdsJobLocks.has(lockKey)) {
-        return {
-            ok: false,
-            skipped: true,
-            reason: "ADS_JOB_RUNNING",
-            date
-        };
-    }
-
-    const job = (async () => {
-        try {
-            return await runAmazonAdsImportDay({
-                date,
-                mongoShopId,
-                adsBackendUrl
-            });
-        } finally {
-            amazonAdsJobLocks.delete(lockKey);
-        }
-    })();
-
-    amazonAdsJobLocks.set(lockKey, job);
-    return job;
-}
-
-async function runAmazonAdsImportDay({ date, mongoShopId, adsBackendUrl }) {
-    console.log("[LNG][sw][ADS] runAmazonAdsImportDay start", {
-        date,
-        mongoShopId,
-        adsBackendUrl
-    });
-
-    const tab = await ensureAmazonAdsTab();
-
-    // 1. Refresh/capture headers trước.
-    // Hàm này có thể reload tab, nên tuyệt đối không inject content script trước nó.
-    await ensureFreshAdsHeaders(tab.id);
-
-    // 2. Sau khi tab đã load xong và headers đã có, mới inject content script.
-    await injectAmazonAdsContentScript(tab.id);
-
-    let contentResponse = await chrome.tabs.sendMessage(tab.id, {
-        action: "CONTENT_AMAZON_ADS_EXPORT",
-        payload: {
-            date
-        }
-    });
-
-    // 3. Nếu lỗi auth/token/csrf thì clear headers, refresh lại, rồi inject lại content script.
-    if (!contentResponse?.ok && isAdsAuthError(contentResponse?.message)) {
-        console.warn("[LNG][sw][ADS] auth error, refreshing headers and retrying", {
-            message: contentResponse?.message
-        });
-
-        await clearAdsHeaders();
-
-        await ensureFreshAdsHeaders(tab.id, {
-            force: true
-        });
-
-        // Sau force refresh/reload, phải inject lại.
-        await injectAmazonAdsContentScript(tab.id);
-
-        contentResponse = await chrome.tabs.sendMessage(tab.id, {
-            action: "CONTENT_AMAZON_ADS_EXPORT",
-            payload: {
-                date
-            }
-        });
-    }
-
-    if (!contentResponse?.ok) {
-        throw new Error(contentResponse?.message || "Amazon Ads content export failed");
-    }
-
-    const adsData = contentResponse.data;
-    const txt = adsData.txt || "";
-
-    const push = await pushAdsSpendToBackend({
-        adsBackendUrl,
-        mongoShopId,
-        date,
-        txt
-    });
-
-    return {
-        ok: true,
-        date,
-        mongoShopId,
-        rows: adsData.summary?.rowCount || 0,
-        totalSpend: adsData.summary?.totalSpend || 0,
-        push
-    };
-}
-
-async function ensureAmazonAdsTab() {
-    const tabs = await chrome.tabs.query({
-        url: "https://advertising.amazon.com/*"
-    });
-
-    console.log("[LNG][sw][ADS] ads tabs found", tabs.length);
-
-    const campaignsTab = tabs.find((t) => t.url && t.url.includes("/cm/campaigns"));
-
-    if (campaignsTab) {
-        console.log("[LNG][sw][ADS] reuse campaigns tab", campaignsTab.id);
-
-        if (campaignsTab.status !== "complete") {
-            await waitForTabComplete(campaignsTab.id);
-        }
-
-        return campaignsTab;
-    }
-
-    console.log("[LNG][sw][ADS] open new campaigns tab");
-
-    const newTab = await chrome.tabs.create({
-        active: true,
-        url: CONFIG.AMAZON_ADS_URL
-    });
-
-    await waitForTabComplete(newTab.id);
-
-    return await chrome.tabs.get(newTab.id);
-}
-
-async function injectAmazonAdsContentScript(tabId) {
-    console.log("[LNG][sw][ADS] injectAmazonAdsContentScript", tabId);
-
-    await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ["content-amazon-ads.js"]
-    });
-}
-
-async function ensureFreshAdsHeaders(tabId, options = {}) {
-    const force = Boolean(options.force);
-    const st = await chrome.storage.local.get([
-        "adsAccountId",
-        "adsAdvertiserId",
-        "adsClientId",
-        "adsMarketplaceId",
-        "adsCsrfData",
-        "adsCsrfToken",
-        "adsHeaderLastSeen"
-    ]);
-
-    const age = st.adsHeaderLastSeen ? Date.now() - st.adsHeaderLastSeen : Infinity;
-
-    const complete =
-        st.adsAccountId &&
-        st.adsAdvertiserId &&
-        st.adsClientId &&
-        st.adsMarketplaceId &&
-        st.adsCsrfData &&
-        st.adsCsrfToken;
-
-    if (!force && complete && age < CONFIG.ADS_HEADER_TTL_MS) {
-        console.log("[LNG][sw][ADS-AUTH] fresh headers ready", {
-            ageSeconds: Math.round(age / 1000)
-        });
-
-        return true;
-    }
-
-    console.log("[LNG][sw][ADS-AUTH] refresh headers", {
-        force,
-        hasCompleteHeaders: Boolean(complete),
-        ageSeconds: Number.isFinite(age) ? Math.round(age / 1000) : null
-    });
-
-    await chrome.tabs.reload(tabId);
-
-    await waitForTabComplete(tabId);
-
-    return await waitForAdsHeadersCaptured({
-        timeoutMs: 60000
-    });
-}
-
-async function waitForAdsHeadersCaptured({ timeoutMs = 60000 } = {}) {
-    const startedAt = Date.now();
-
-    while (Date.now() - startedAt < timeoutMs) {
-        const st = await chrome.storage.local.get([
-            "adsAccountId",
-            "adsAdvertiserId",
-            "adsClientId",
-            "adsMarketplaceId",
-            "adsCsrfData",
-            "adsCsrfToken",
-            "adsHeaderLastSeen"
-        ]);
-
-        const complete =
-            st.adsAccountId &&
-            st.adsAdvertiserId &&
-            st.adsClientId &&
-            st.adsMarketplaceId &&
-            st.adsCsrfData &&
-            st.adsCsrfToken &&
-            st.adsHeaderLastSeen &&
-            st.adsHeaderLastSeen >= startedAt;
-
-        if (complete) {
-            console.log("[LNG][sw][ADS-AUTH] headers captured after refresh");
-            return true;
-        }
-
-        await sleep(1000);
-    }
-
-    throw new Error("Không capture được Amazon Ads headers. Hãy login advertising.amazon.com và mở Campaign Manager.");
-}
-
-async function clearAdsHeaders() {
-    await chrome.storage.local.remove([
-        "adsAccountId",
-        "adsAdvertiserId",
-        "adsClientId",
-        "adsMarketplaceId",
-        "adsCsrfData",
-        "adsCsrfToken",
-        "adsHeaderLastSeen"
-    ]);
-
-    console.log("[LNG][sw][ADS-AUTH] cleared cached headers");
-}
-
-function isAdsAuthError(message) {
-    const value = String(message || "").toLowerCase();
-
-    return (
-        value.includes("401") ||
-        value.includes("403") ||
-        value.includes("unauthorized") ||
-        value.includes("forbidden") ||
-        value.includes("csrf") ||
-        value.includes("login") ||
-        value.includes("sign in") ||
-        value.includes("missing amazon ads headers") ||
-        value.includes("receiving end does not exist") ||
-        value.includes("could not establish connection")
-    );
-}
-
-async function pushAdsSpendToBackend({ adsBackendUrl, mongoShopId, date, txt }) {
-    console.log("[LNG][sw][ADS] pushAdsSpendToBackend", {
-        adsBackendUrl,
-        mongoShopId,
-        date,
-        size: txt.length
-    });
-
-    const formData = new FormData();
-
-    formData.append("shopId", mongoShopId);
-    formData.append("day", date);
-    formData.append(
-        "file",
-        new Blob([txt], { type: "text/plain;charset=utf-8" }),
-        `ads-spend-${date}.txt`
-    );
-
-    const response = await fetch(adsBackendUrl, {
-        method: "POST",
-        body: formData
-    });
-
-    const text = await response.text();
-
-    let body = null;
-
-    try {
-        body = JSON.parse(text);
-    } catch (_) {
-        body = { raw: text };
-    }
-
-    if (!response.ok) {
-        throw new Error(`Backend Ads ${response.status}: ${text.slice(0, 300)}`);
-    }
-
-    return {
-        status: response.status,
-        body
-    };
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const etsyAdsJobLocks = new Map();

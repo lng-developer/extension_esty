@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LNG Etsy Worker",
   "version": "1.1.0",
-  "description": "Get Etsy orders, upload Etsy tracking, and import Amazon Ads spend.",
+  "description": "Get Etsy orders, sync listings and ads, and upload Etsy tracking.",
   "permissions": [
     "tabs",
     "scripting",
@@ -12,7 +12,6 @@
   ],
   "host_permissions": [
     "https://www.etsy.com/*",
-    "https://advertising.amazon.com/*",
     "https://api.lngmerch.co/*"
   ],
   "background": {
