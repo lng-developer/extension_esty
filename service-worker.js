@@ -3694,12 +3694,12 @@ async function ensureEtsyTargetOrderDetailTab(targetOrderId) {
         throw new Error("Missing targetOrderId for Etsy order detail tab");
     }
 
-    const primaryUrl = `https://www.etsy.com/your/orders/sold/new?order_id=${encodeURIComponent(safeTargetOrderId)}&search_query=${encodeURIComponent(safeTargetOrderId)}`;
+    const primaryUrl = `https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=${encodeURIComponent(safeTargetOrderId)}`;
     const fallbackUrl = `https://www.etsy.com/your/orders/${encodeURIComponent(safeTargetOrderId)}`;
     const tabs = await chrome.tabs.query({ url: "https://www.etsy.com/*" });
     const existing = tabs.find((tab) => {
         const url = String(tab.url || "");
-        return url.includes(`/your/orders/sold/new`) &&
+        return url.includes(`/your/orders/sold`) &&
             url.includes(`order_id=${safeTargetOrderId}`);
     }) || tabs.find((tab) => String(tab.url || "").includes(`/your/orders/${safeTargetOrderId}`));
 
