@@ -30,3 +30,12 @@ test("reports custom-file scan outcomes to the existing portal log API", async (
   assert.match(match[0], /IMPORT_ORDERS custom-file scan failed/);
   assert.doesNotMatch(match[0], /downloadUrl|previewUrl|buyerName/);
 });
+
+test("closes only Etsy tabs created by successful tasks", async () => {
+  const source = await readFile(new URL("../service-worker.js", import.meta.url), "utf8");
+
+  assert.match(source, /async function closeTaskCreatedEtsyTab\(/);
+  assert.match(source, /if \(!createdByTask \|\| !tab\?\.id\) return false;/);
+  assert.match(source, /await chrome\.tabs\.remove\(tab\.id\)/);
+  assert.match(source, /createdByTask: !existing/);
+});

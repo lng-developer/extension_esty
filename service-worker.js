@@ -2697,7 +2697,8 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         forceDomCustomFileScan
     });
 
-    const tab = await ensureEtsySoldOrdersTab();
+    const tabLease = await ensureEtsySoldOrdersTab();
+    const tab = tabLease.tab;
     console.log("[LNG][sw] tab ready", { tabId: tab.id, url: tab.url });
     await logServiceEvent({
         service: "IMPORT_ORDERS",
@@ -2839,7 +2840,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         }
     });
 
-    return {
+    const result = {
         etsyShopId: etsyData.shopId,
         shopName: etsyData.shopName,
         mongoShopId,
@@ -2850,6 +2851,9 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         domCustomFileSummary,
         push: pushResult
     };
+
+    await closeTaskCreatedEtsyTab(tab, tabLease.createdByTask);
+    return result;
 }
 
 async function handleSyncEtsyListings(payload = {}) {
@@ -2877,7 +2881,8 @@ async function handleSyncEtsyListings(payload = {}) {
         batchSize
     });
 
-    const tab = await ensureEtsySoldOrdersTab();
+    const tabLease = await ensureEtsySoldOrdersTab();
+    const tab = tabLease.tab;
     console.log("[LNG][sw][ETSY_LISTINGS] tab ready", { tabId: tab.id, url: tab.url });
     await logServiceEvent({
         service: "SYNC_ETSY_LISTINGS",
@@ -2968,7 +2973,7 @@ async function handleSyncEtsyListings(payload = {}) {
         rawData: summarizeListingPush(push)
     });
 
-    return {
+    const result = {
         ok: true,
         endpoint,
         mongoShopId,
@@ -2978,6 +2983,9 @@ async function handleSyncEtsyListings(payload = {}) {
         summary: etsyData.summary || null,
         push
     };
+
+    await closeTaskCreatedEtsyTab(tab, tabLease.createdByTask);
+    return result;
 }
 
 const etsyAdsFullImportLocks = new Map();
@@ -3481,7 +3489,8 @@ async function handleUploadTrackingToEtsy(payload) {
         carrier
     });
 
-    const tab = await ensureEtsySoldOrdersTab();
+    const tabLease = await ensureEtsySoldOrdersTab();
+    const tab = tabLease.tab;
 
     console.log("[LNG][sw] Etsy tab ready for upload tracking", {
         tabId: tab.id,
@@ -3503,6 +3512,7 @@ async function handleUploadTrackingToEtsy(payload) {
         throw new Error(contentResponse?.message || "Content upload tracking failed");
     }
 
+    await closeTaskCreatedEtsyTab(tab, tabLease.createdByTask);
     return contentResponse.data;
 }
 
@@ -3679,7 +3689,8 @@ async function ensureEtsySoldOrdersTab() {
     const tabs = await chrome.tabs.query({ url: "https://www.etsy.com/*" });
     console.log("[LNG][sw] etsy tabs found", tabs.length);
 
-    return ensurePageTabReady({
+    const existing = tabs.find((tab) => Boolean(tab?.url && tab.url.includes("/your/orders/sold")));
+    const tab = await ensurePageTabReady({
         tabsApi: chrome.tabs,
         queryUrl: "https://www.etsy.com/*",
         targetUrl: CONFIG.ETSY_SOLD_URL,
@@ -3689,6 +3700,8 @@ async function ensureEtsySoldOrdersTab() {
         logger: console,
         initialTabs: tabs
     });
+
+    return { tab, createdByTask: !existing };
 }
 
 async function ensureEtsyTargetOrderDetailTab(targetOrderId) {
@@ -3712,7 +3725,7 @@ async function ensureEtsyTargetOrderDetailTab(targetOrderId) {
 
     try {
         await waitForTabComplete(tab.id);
-        return await chrome.tabs.get(tab.id);
+        return { tab: await chrome.tabs.get(tab.id), createdByTask: !existing };
     } catch (error) {
         console.warn("[LNG][sw][CUSTOM_FILE_DOM_DETAIL] primary detail tab failed, fallback", {
             targetOrderId: safeTargetOrderId,
@@ -3723,12 +3736,13 @@ async function ensureEtsyTargetOrderDetailTab(targetOrderId) {
             url: fallbackUrl
         });
         await waitForTabComplete(fallbackTab.id);
-        return await chrome.tabs.get(fallbackTab.id);
+        return { tab: await chrome.tabs.get(fallbackTab.id), createdByTask: !existing };
     }
 }
 
 async function scanTargetOrderDomCustomFiles({ targetOrderId, waitMs = 3000 }) {
-    const tab = await ensureEtsyTargetOrderDetailTab(targetOrderId);
+    const tabLease = await ensureEtsyTargetOrderDetailTab(targetOrderId);
+    const tab = tabLease.tab;
     await injectContentScript(tab.id);
 
     const response = await sendMessageToTabWithRetry(tab.id, {
@@ -3751,7 +3765,24 @@ async function scanTargetOrderDomCustomFiles({ targetOrderId, waitMs = 3000 }) {
         files: (response.data?.customFiles || []).map(maskCustomFileForServiceLog)
     });
 
-    return response.data || {};
+    const result = response.data || {};
+    await closeTaskCreatedEtsyTab(tab, tabLease.createdByTask);
+    return result;
+}
+
+async function closeTaskCreatedEtsyTab(tab, createdByTask) {
+    if (!createdByTask || !tab?.id) return false;
+
+    try {
+        await chrome.tabs.remove(tab.id);
+        return true;
+    } catch (error) {
+        console.warn("[LNG][sw][ETSY_TAB_CLOSE_ERROR]", {
+            tabId: tab.id,
+            message: error?.message || String(error)
+        });
+        return false;
+    }
 }
 
 function maskUrlForServiceLog(url) {
@@ -4875,7 +4906,8 @@ async function runEtsyAdsImportDay({
         }
     });
 
-    const tab = await ensureEtsyAdsTab();
+    const tabLease = await ensureEtsyAdsTab();
+    const tab = tabLease.tab;
     await logServiceEvent({
         service: "ETSY_ADS",
         logType: "debug",
@@ -5065,6 +5097,7 @@ async function runEtsyAdsImportDay({
         }
     });
 
+    await closeTaskCreatedEtsyTab(tab, tabLease.createdByTask);
     return result;
 }
 
@@ -5075,7 +5108,12 @@ async function ensureEtsyAdsTab() {
 
     console.log("[LNG][sw][ETSY_ADS] etsy tabs found", tabs.length);
 
-    return ensurePageTabReady({
+    const existing = tabs.find((tab) => Boolean(
+        tab?.url &&
+        tab.url.includes("/your/shops/") &&
+        tab.url.includes("/advertising")
+    ));
+    const tab = await ensurePageTabReady({
         tabsApi: chrome.tabs,
         queryUrl: "https://www.etsy.com/*",
         targetUrl: CONFIG.ETSY_ADS_URL,
@@ -5089,6 +5127,8 @@ async function ensureEtsyAdsTab() {
         logger: console,
         initialTabs: tabs
     });
+
+    return { tab, createdByTask: !existing };
 }
 
 async function pushEtsyAdsToBackend({
