@@ -39,3 +39,11 @@ test("closes only Etsy tabs created by successful tasks", async () => {
   assert.match(source, /await chrome\.tabs\.remove\(tab\.id\)/);
   assert.match(source, /createdByTask: !existing/);
 });
+
+test("skips orders already processed for the same shop but keeps targeted reimports", async () => {
+  const source = await readFile(new URL("../service-worker.js", import.meta.url), "utf8");
+
+  assert.match(source, /async function getProcessedEtsyOrderIds\(mongoShopId\)/);
+  assert.match(source, /const backendOrders = targetOrderId[\s\S]*?\.filter\(\(order\) => !processedOrderIds\.has/);
+  assert.match(source, /await rememberProcessedEtsyOrderIds\(mongoShopId, pushResult\.processedOrderIds\)/);
+});

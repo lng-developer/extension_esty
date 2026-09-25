@@ -35,6 +35,8 @@ const ETSY_MESSAGE_MONITOR_PERIOD_MINUTES = 10;
 const ETSY_MESSAGE_MONITOR_AUTO_ENABLED = false;
 const ETSY_MESSAGE_SNAPSHOT_KEY = "etsyMessageSyncSnapshot";
 const ETSY_MESSAGE_MONITOR_DEBUG_LOGS_KEY = "etsyMessageMonitorDebugLogs";
+const ETSY_PROCESSED_ORDER_IDS_KEY = "etsyProcessedOrderIdsByShop";
+const ETSY_PROCESSED_ORDER_IDS_LIMIT = 500;
 let etsyAutoConfigLastSnapshot = {
     fetchedAt: null,
     records: [],
@@ -231,6 +233,36 @@ function sampleIds(items, keys, limit = 5) {
             return "";
         })
         .filter(Boolean);
+}
+
+async function getProcessedEtsyOrderIds(mongoShopId) {
+    try {
+        const cfg = await chrome.storage.local.get([ETSY_PROCESSED_ORDER_IDS_KEY]);
+        const byShop = cfg[ETSY_PROCESSED_ORDER_IDS_KEY] || {};
+        return new Set((Array.isArray(byShop[mongoShopId]) ? byShop[mongoShopId] : []).map(String));
+    } catch (error) {
+        console.warn("[LNG][sw][ORDER_DEDUP] read cache failed", error?.message || String(error));
+        return new Set();
+    }
+}
+
+async function rememberProcessedEtsyOrderIds(mongoShopId, orderIds) {
+    const newIds = (Array.isArray(orderIds) ? orderIds : []).map(String).filter(Boolean);
+    if (!newIds.length) return;
+
+    try {
+        const cfg = await chrome.storage.local.get([ETSY_PROCESSED_ORDER_IDS_KEY]);
+        const byShop = cfg[ETSY_PROCESSED_ORDER_IDS_KEY] || {};
+        const existing = Array.isArray(byShop[mongoShopId]) ? byShop[mongoShopId] : [];
+        await chrome.storage.local.set({
+            [ETSY_PROCESSED_ORDER_IDS_KEY]: {
+                ...byShop,
+                [mongoShopId]: [...new Set([...existing, ...newIds])].slice(-ETSY_PROCESSED_ORDER_IDS_LIMIT)
+            }
+        });
+    } catch (error) {
+        console.warn("[LNG][sw][ORDER_DEDUP] write cache failed", error?.message || String(error));
+    }
 }
 
 function summarizeListingPush(push) {
@@ -2737,7 +2769,12 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
     }
 
     const etsyData = contentResponse.data;
-    const backendOrders = etsyData.orders || [];
+    const fetchedOrders = etsyData.orders || [];
+    const processedOrderIds = targetOrderId ? new Set() : await getProcessedEtsyOrderIds(mongoShopId);
+    const backendOrders = targetOrderId
+        ? fetchedOrders
+        : fetchedOrders.filter((order) => !processedOrderIds.has(String(order?.orderId || "")));
+    const skippedProcessedOrders = fetchedOrders.length - backendOrders.length;
     let domCustomFileSummary = null;
 
     if (customImportOptions.customFileDetailMode === "dom_detail" && targetOrderId) {
@@ -2780,7 +2817,9 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
     console.log("[LNG][sw][ETSY_DATA]", {
         shopId: etsyData.shopId,
         shopName: etsyData.shopName,
+        fetchedOrders: fetchedOrders.length,
         totalOrders: backendOrders.length,
+        skippedProcessedOrders,
         targetOrderId,
         pageSize,
         maxTotalOrders,
@@ -2796,7 +2835,9 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         rawData: {
             etsyShopId: etsyData.shopId || null,
             shopName: etsyData.shopName || null,
+            fetchedOrders: fetchedOrders.length,
             totalOrders: backendOrders.length,
+            skippedProcessedOrders,
             sampleOrderIds: sampleIds(backendOrders, ["orderId", "receiptId", "id"]),
             targetOrderId,
             pageSize,
@@ -2827,6 +2868,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
     });
 
     const pushResult = await pushOrdersToBackend(backendOrders, backendUrl);
+    await rememberProcessedEtsyOrderIds(mongoShopId, pushResult.processedOrderIds);
 
     await logServiceEvent({
         service: "IMPORT_ORDERS",
@@ -2847,6 +2889,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         backendUrl,
         targetOrderId,
         totalOrders: backendOrders.length,
+        skippedProcessedOrders,
         meta: etsyData.meta || null,
         domCustomFileSummary,
         push: pushResult
@@ -3551,6 +3594,7 @@ async function pushOrdersToBackend(orders, backendUrl) {
     const duplicated = [];
     const backfilled = [];
     const failed = [];
+    const processedOrderIds = [];
     let skuBackfilled = 0;
     let listingIdBackfilled = 0;
 
@@ -3609,6 +3653,7 @@ async function pushOrdersToBackend(orders, backendUrl) {
 
             if (response.status === 201) {
                 created.push({ orderId: order.orderId, _id: body?._id });
+                processedOrderIds.push(String(order.orderId));
                 console.log(`[LNG][sw][PUSH] ${tag} 201 created`, body?._id);
             } else if (response.status === 200 && body?.duplicated === true) {
                 const duplicateResult = {
@@ -3623,6 +3668,7 @@ async function pushOrdersToBackend(orders, backendUrl) {
                 };
 
                 duplicated.push(duplicateResult);
+                processedOrderIds.push(String(duplicateResult.orderId));
 
                 if (duplicateResult.backfilled) {
                     backfilled.push(duplicateResult);
@@ -3642,6 +3688,7 @@ async function pushOrdersToBackend(orders, backendUrl) {
                 console.log(`[LNG][sw][PUSH] ${tag} 200 duplicated`, duplicateResult);
             } else if (response.status === 409) {
                 duplicated.push({ orderId: order.orderId, _id: body?._id });
+                processedOrderIds.push(String(order.orderId));
                 console.warn(`[LNG][sw][PUSH] ${tag} 409 duplicated`, body?.message);
             } else if (response.status === 400) {
                 failed.push({
@@ -3673,6 +3720,7 @@ async function pushOrdersToBackend(orders, backendUrl) {
         skuBackfilled,
         listingIdBackfilled,
         failed: failed.length,
+        processedOrderIds,
         samples: {
             created: created.slice(0, 3),
             duplicated: duplicated.slice(0, 3),
