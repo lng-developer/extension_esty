@@ -1,8 +1,10 @@
 const btnGetOrders = document.getElementById("btnGetOrders");
+const btnReimportOrder = document.getElementById("btnReimportOrder");
 const btnSyncEtsyListings = document.getElementById("btnSyncEtsyListings");
 const btnSaveCfg = document.getElementById("btnSaveCfg");
 const inputShopId = document.getElementById("mongoShopId");
 const inputBackend = document.getElementById("backendUrl");
+const inputReimportOrderId = document.getElementById("reimportOrderId");
 const btnUploadTracking = document.getElementById("btnUploadTracking");
 const inputTrackingOrderId = document.getElementById("trackingOrderId");
 const inputTrackingNumber = document.getElementById("trackingNumber");
@@ -460,6 +462,60 @@ btnGetOrders.addEventListener("click", async () => {
     renderLog("Loi ❌", { message: error.message });
   } finally {
     btnGetOrders.disabled = false;
+  }
+});
+
+btnReimportOrder.addEventListener("click", async () => {
+  const mongoShopId = inputShopId.value.trim();
+  const backendUrl = inputBackend.value.trim() || DEFAULT_BACKEND_URL;
+  const orderId = inputReimportOrderId.value.trim();
+
+  if (!mongoShopId || !/^[a-f0-9]{24}$/i.test(mongoShopId)) {
+    renderLog("Mongo Shop ID phai la ObjectId 24-hex hop le.");
+    return;
+  }
+  if (!/^\d+$/.test(orderId)) {
+    renderLog("Etsy Order ID phai la chuoi so hop le.");
+    return;
+  }
+
+  chrome.storage.local.set({ mongoShopId, backendUrl });
+  btnReimportOrder.disabled = true;
+  renderLog(`Dang re-import order ${orderId} va quet anh...`);
+
+  const startedAt = performance.now();
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: "ETSY_GET_ORDERS_AND_PUSH",
+      payload: {
+        limit: 1,
+        pageSize: 1,
+        maxTotalOrders: 1,
+        targetOrderId: orderId,
+        mongoShopId,
+        backendUrl,
+        includeCustomizations: true,
+        includeCustomFiles: true,
+        customFileDetailMode: "auto_upload_detail",
+        forceDomCustomFileScan: true,
+        maxAutoDomDetailOrders: 1,
+        domDetailWaitMs: 3000
+      }
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.message || "Unknown error");
+    }
+
+    renderLog(`Re-import order ${orderId} hoan tat ✅`, {
+      elapsedMs: Math.round(performance.now() - startedAt),
+      ...response.data
+    });
+  } catch (error) {
+    console.error("[LNG][popup][REIMPORT_ORDER_ERROR]", error);
+    renderLog(`Re-import order ${orderId} loi ❌`, { message: error.message });
+  } finally {
+    btnReimportOrder.disabled = false;
   }
 });
 

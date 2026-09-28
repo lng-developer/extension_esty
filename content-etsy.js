@@ -1882,6 +1882,24 @@ function pickBestIpfImageProbe(probes = []) {
         .sort((a, b) => (Number(b.width) * Number(b.height)) - (Number(a.width) * Number(a.height)))[0] || null;
 }
 
+function scrollOrderDetailForCustomFiles() {
+    const targets = [document.scrollingElement, ...document.querySelectorAll("*")]
+        .filter((element) => element && element.scrollHeight > element.clientHeight + 24)
+        .sort((left, right) => right.scrollHeight - left.scrollHeight)
+        .slice(0, 8);
+    const positions = targets.map((element) => ({ element, scrollTop: element.scrollTop }));
+
+    for (const { element } of positions) {
+        element.scrollTop = element.scrollHeight;
+    }
+
+    return () => {
+        for (const { element, scrollTop } of positions) {
+            element.scrollTop = scrollTop;
+        }
+    };
+}
+
 async function scanOrderDetailDomForCustomFiles({ targetOrderId, waitMs = 3000 } = {}) {
     const safeTargetOrderId = String(targetOrderId || "").trim();
     const safeWaitMs = Number.isFinite(Number(waitMs)) ? Number(waitMs) : 3000;
@@ -1890,9 +1908,11 @@ async function scanOrderDetailDomForCustomFiles({ targetOrderId, waitMs = 3000 }
         throw new Error("Missing targetOrderId for DOM custom file scan");
     }
 
+    const restoreScroll = scrollOrderDetailForCustomFiles();
     await sleep(safeWaitMs);
 
     const elements = Array.from(document.querySelectorAll('img[src*="/ipf/"], img[src*="ipf_"]'));
+    restoreScroll();
     const files = [];
     const seenPreviewUrls = new Set();
     const filesMasked = [];

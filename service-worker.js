@@ -13,6 +13,7 @@ import {
     ETSY_TAB_READY_TIMEOUT_MS,
     waitForTabCompleteWithTimeout
 } from "./service-worker-tab-utils.mjs";
+import { distributeCustomFilesByItem } from "./etsy-custom-file-mapping.mjs";
 
 
 const CONFIG = {
@@ -3951,6 +3952,7 @@ function findOrdersNeedingDomCustomFileScan(backendOrders = [], options = {}) {
         if (!orderId || seenOrders.has(orderId)) continue;
 
         const items = Array.isArray(order?.items) ? order.items : [];
+        const uploadItems = [];
         for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
             const item = items[itemIndex] || {};
             const uploadFields = getCustomerUploadSignalFieldsInItem(item);
@@ -3965,17 +3967,23 @@ function findOrdersNeedingDomCustomFileScan(backendOrders = [], options = {}) {
                 uploadFields
             });
 
-            seenOrders.add(orderId);
-            candidates.push({
-                orderId,
+            uploadItems.push({
                 itemIndex,
                 transactionId: String(item.transactionId || ""),
                 listingId: String(item.listingId || ""),
                 sku: String(item.sku || ""),
-                reason: "customization_upload_signal",
                 uploadFields
             });
-            break;
+        }
+
+        if (uploadItems.length) {
+            seenOrders.add(orderId);
+            candidates.push({
+                orderId,
+                ...uploadItems[0],
+                items: uploadItems,
+                reason: "customization_upload_signal"
+            });
         }
     }
 
@@ -4046,7 +4054,13 @@ async function runAutoUploadDomDetailScan({
                 filesFound: files.length
             });
 
-            const mergeResult = mergeDomCustomFilesIntoBackendOrders(backendOrders, candidate, files);
+            const assignments = distributeCustomFilesByItem(candidate.items, files);
+            const mergeResult = assignments.reduce((result, assignment) => {
+                const itemResult = mergeDomCustomFilesIntoBackendOrders(backendOrders, { ...candidate, ...assignment }, assignment.files);
+                result.addedFiles += itemResult.addedFiles || 0;
+                result.totalItemCustomFiles += itemResult.totalItemCustomFiles || 0;
+                return result;
+            }, { addedFiles: 0, totalItemCustomFiles: 0 });
             summary.scannedOrders += 1;
             summary.filesMerged += mergeResult.addedFiles || 0;
             await logServiceEvent({

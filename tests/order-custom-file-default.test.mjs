@@ -47,3 +47,16 @@ test("skips orders already processed for the same shop but keeps targeted reimpo
   assert.match(source, /const backendOrders = targetOrderId[\s\S]*?\.filter\(\(order\) => !processedOrderIds\.has/);
   assert.match(source, /await rememberProcessedEtsyOrderIds\(mongoShopId, pushResult\.processedOrderIds\)/);
 });
+
+test("offers a one-order reimport control that forces the customer-file scan", async () => {
+  const [html, popup] = await Promise.all([
+    readFile(new URL("../popup.html", import.meta.url), "utf8"),
+    readFile(new URL("../popup.js", import.meta.url), "utf8")
+  ]);
+
+  assert.match(html, /id="reimportOrderId"/);
+  assert.match(html, /id="btnReimportOrder"/);
+  assert.match(popup, /targetOrderId: orderId/);
+  assert.match(popup, /forceDomCustomFileScan: true/);
+  assert.match(popup, /maxTotalOrders: 1/);
+});
