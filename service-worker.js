@@ -1639,12 +1639,11 @@ async function handleSocketTask(task, context = {}) {
         });
 
         const isTrackingTask = taskType === "ETSY_UPLOAD_TRACKING" || taskType === "UPLOAD_TRACKING";
-        const apiAgent = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
-        if (!isTrackingTask && await apiAgent.isConfigured()) {
+        if (!isTrackingTask) {
             return {
                 ok: false,
                 skipped: true,
-                reason: "LNG_WEB_BE_AGENT_MODE",
+                reason: "SOCKET_TRANSPORT_DISABLED",
                 taskId,
                 taskTypeRaw,
                 taskType

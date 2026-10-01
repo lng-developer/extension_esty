@@ -13,7 +13,8 @@ test("runs the authenticated command loop and uploads both supported CSV imports
   assert.match(worker, /toEtsyAdsCsv/);
 });
 
-test("keeps Socket tasks to tracking when API-agent mode is configured", () => {
+test("keeps Socket tasks to tracking without falling back when token setup is invalid", () => {
   assert.match(worker, /const isTrackingTask = taskType === "ETSY_UPLOAD_TRACKING" \|\| taskType === "UPLOAD_TRACKING"/);
-  assert.match(worker, /reason: "LNG_WEB_BE_AGENT_MODE"/);
+  assert.match(worker, /if \(!isTrackingTask\) \{/);
+  assert.match(worker, /reason: "SOCKET_TRANSPORT_DISABLED"/);
 });
