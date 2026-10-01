@@ -8,7 +8,7 @@ function completionPayload(leaseToken, result) {
   };
 }
 
-export async function executeNextLngWebBeCommand({ client, executeOrders, executeAds }) {
+export async function executeNextLngWebBeCommand({ client, executeOrders, executeAds, validateCommand, isRetryableError }) {
   await client.heartbeat();
   const claim = await client.claimNext();
   if (!claim?.command || !claim.leaseToken) return { ok: true, idle: true };
@@ -19,6 +19,14 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
       ? executeAds
       : null;
   if (!executor) return { ok: false, skipped: true, reason: "UNSUPPORTED_COMMAND" };
+  if (!/^[a-f0-9]{24}$/i.test(String(claim.command.id || ""))) {
+    return { ok: false, skipped: true, reason: "INVALID_COMMAND_ID" };
+  }
+  if (String(claim.leaseToken).length < 20) {
+    return { ok: false, skipped: true, reason: "INVALID_LEASE_TOKEN" };
+  }
+  const validationError = validateCommand?.(claim.command);
+  if (validationError) return { ok: false, skipped: true, reason: validationError };
 
   await client.start(claim.command.id, claim.leaseToken);
   try {
@@ -31,6 +39,7 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
     await client.complete(claim.command.id, completionPayload(claim.leaseToken, result));
     return { ok: true, command: claim.command, result };
   } catch (error) {
+    if (isRetryableError?.(error)) throw error;
     await client.complete(claim.command.id, {
       leaseToken: claim.leaseToken,
       success: false,

@@ -101,6 +101,14 @@ async function runLngWebBeAgentOnce() {
     try {
         return await executeNextLngWebBeCommand({
             client,
+            validateCommand: (command) => {
+                if (command.type !== "IMPORT_ADS_SPEND") return null;
+                const date = String(command.dateFrom || "");
+                return /^\d{4}-\d{2}-\d{2}$/.test(date) && date === command.dateTo
+                    ? null
+                    : "Ads commands must contain exactly one YYYY-MM-DD date";
+            },
+            isRetryableError: (error) => !Number.isInteger(Number(error?.status)) || Number(error.status) >= 500,
             executeOrders: async ({ commandId, numDays }) => {
                 const data = await handleGetEtsyOrdersAndPush({
                     taskId: commandId,
@@ -2530,17 +2538,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === "ETSY_GET_ORDERS_AND_PUSH" || message.action === "ETSY_GET_ORDERS") {
-        handleGetEtsyOrdersAndPush(message.payload || {})
-            .then((data) => {
-                console.log("[LNG][sw] ETSY_GET_ORDERS_AND_PUSH done", data);
-                sendResponse({ ok: true, data });
-            })
-            .catch((error) => {
-                console.error("[LNG][sw][ERROR]", error);
-                sendResponse({ ok: false, message: error.message || "Failed" });
-            });
-
-        return true;
+        sendResponse({ ok: false, message: "Orders are managed by the authenticated LNG Web BE agent" });
+        return false;
     }
 
     if (message.action === "ETSY_SYNC_LISTINGS") {
@@ -2605,17 +2604,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === "ETSY_ADS_FULL_IMPORT") {
-        handleImportEtsyAdsWithListings(message.payload || {})
-            .then((data) => {
-                console.log("[LNG][sw] ETSY_ADS_FULL_IMPORT done", data);
-                sendResponse({ ok: true, data });
-            })
-            .catch((error) => {
-                console.error("[LNG][sw][ETSY_ADS_FULL_IMPORT_ERROR]", error);
-                sendResponse({ ok: false, message: error.message || "Etsy Ads full import failed" });
-            });
-
-        return true;
+        sendResponse({ ok: false, message: "Ads are managed by the authenticated LNG Web BE agent" });
+        return false;
     }
 
     if (message.action === "ETSY_UPLOAD_TRACKING") {
@@ -2715,21 +2705,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.action === "ETSY_ADS_IMPORT_DAY") {
-        handleEtsyAdsImportDay(message.payload || {})
-            .then((data) => {
-                console.log("[LNG][sw] ETSY_ADS_IMPORT_DAY done", data);
-                sendResponse({ ok: true, data });
-            })
-            .catch((error) => {
-                console.error("[LNG][sw][ETSY_ADS_IMPORT_DAY_ERROR]", error);
-
-                sendResponse({
-                    ok: false,
-                    message: error.message || "Etsy Ads import failed"
-                });
-            });
-
-        return true;
+        sendResponse({ ok: false, message: "Ads are managed by the authenticated LNG Web BE agent" });
+        return false;
     }
 
     return false;

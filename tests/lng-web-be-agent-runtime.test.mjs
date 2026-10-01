@@ -18,3 +18,10 @@ test("keeps Socket tasks to tracking without falling back when token setup is in
   assert.match(worker, /if \(!isTrackingTask\) \{/);
   assert.match(worker, /reason: "SOCKET_TRANSPORT_DISABLED"/);
 });
+
+test("rejects legacy popup messages for Orders and Ads", () => {
+  assert.match(worker, /Orders are managed by the authenticated LNG Web BE agent/);
+  assert.match(worker, /Ads are managed by the authenticated LNG Web BE agent/);
+  assert.doesNotMatch(worker, /handleGetEtsyOrdersAndPush\(message\.payload/);
+  assert.doesNotMatch(worker, /handleEtsyAdsImportDay\(message\.payload/);
+});
