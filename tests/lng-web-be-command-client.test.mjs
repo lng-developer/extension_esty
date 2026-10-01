@@ -49,3 +49,22 @@ test("returns null when claim has no queued command", async () => {
 
   assert.equal(await client.claimNext(), null);
 });
+
+test("uploads a CSV with bearer authentication and the command idempotency key", async () => {
+  const calls = [];
+  const client = createLngWebBeCommandClient({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return { ok: true, status: 202, json: async () => ({ success: true, data: { jobId: "job-1" } }) };
+    },
+    getConfig: async () => ({ apiBaseUrl: "https://api.example.test", extensionToken: "lng_ext_valid", clientId: "device-1", label: "Etsy worker" }),
+  });
+
+  await client.uploadCsv("/api/integration/external-order-imports/etsy-sold-order-items", "orders.csv", "Order ID\n1", "command-1", {
+    marketplaceCode: "ETSY_US",
+  });
+
+  assert.equal(calls[0][0], "https://api.example.test/api/integration/external-order-imports/etsy-sold-order-items");
+  assert.equal(calls[0][1].headers.Authorization, "Bearer lng_ext_valid");
+  assert.equal(calls[0][1].headers["Idempotency-Key"], "command-1");
+});

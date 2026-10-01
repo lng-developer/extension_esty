@@ -47,6 +47,28 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
     };
   }
 
+  async function uploadCsv(path, filename, csv, idempotencyKey, fields = {}) {
+    const cfg = await getConfig();
+    const apiBaseUrl = normalizeBaseUrl(cfg.apiBaseUrl);
+    const extensionToken = assertToken(cfg.extensionToken);
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) form.set(key, String(value));
+    form.set("file", new Blob([csv], { type: "text/csv" }), filename);
+    const response = await fetchImpl(`${apiBaseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${extensionToken}`,
+        "Idempotency-Key": String(idempotencyKey),
+      },
+      body: form,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success) {
+      throw error(payload?.message || `LNG Web BE upload failed (${response.status})`, "LNG_WEB_BE_UPLOAD_FAILED", response.status);
+    }
+    return payload.data;
+  }
+
   return {
     async isConfigured() {
       const cfg = await getConfig();
@@ -70,5 +92,6 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
     async complete(commandId, payload) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/complete`, await agentBody(payload));
     },
+    uploadCsv,
   };
 }
