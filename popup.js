@@ -4,6 +4,8 @@ const btnSyncEtsyListings = document.getElementById("btnSyncEtsyListings");
 const btnSaveCfg = document.getElementById("btnSaveCfg");
 const inputShopId = document.getElementById("mongoShopId");
 const inputBackend = document.getElementById("backendUrl");
+const inputLngWebBeApiBaseUrl = document.getElementById("lngWebBeApiBaseUrl");
+const inputExtensionToken = document.getElementById("extensionToken");
 const inputReimportOrderId = document.getElementById("reimportOrderId");
 const btnUploadTracking = document.getElementById("btnUploadTracking");
 const inputTrackingOrderId = document.getElementById("trackingOrderId");
@@ -340,10 +342,12 @@ async function reloadAutoConfig() {
 
 // Load config tu storage
 chrome.storage.local.get(
-  ["mongoShopId", "backendUrl", "etsyAdsBackendUrl"],
+  ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken"],
   (cfg) => {
     inputShopId.value = cfg.mongoShopId || "";
     inputBackend.value = cfg.backendUrl || DEFAULT_BACKEND_URL;
+    if (inputLngWebBeApiBaseUrl) inputLngWebBeApiBaseUrl.value = cfg.lngWebBeApiBaseUrl || "https://api.lngmerch.co";
+    if (inputExtensionToken) inputExtensionToken.value = cfg.extensionToken || "";
 
     if (inputEtsyAdsBackendUrl) {
       inputEtsyAdsBackendUrl.value =
@@ -356,7 +360,7 @@ chrome.storage.local.get(
       inputEtsyAdsDate.value = toLocalYMD(d);
     }
 
-    console.log("[LNG][popup] loaded config", cfg);
+    console.log("[LNG][popup] loaded config", { ...cfg, extensionToken: cfg.extensionToken ? "[configured]" : "" });
   }
 );
 
@@ -379,6 +383,8 @@ btnSaveCfg.addEventListener("click", () => {
     inputEtsyAdsBackendUrl?.value?.trim() || DEFAULT_ETSY_ADS_BACKEND_URL;
   const mongoShopId = inputShopId.value.trim();
   const backendUrl = inputBackend.value.trim() || DEFAULT_BACKEND_URL;
+  const lngWebBeApiBaseUrl = inputLngWebBeApiBaseUrl?.value?.trim() || "https://api.lngmerch.co";
+  const extensionToken = inputExtensionToken?.value?.trim() || "";
 
   if (mongoShopId && !/^[a-f0-9]{24}$/i.test(mongoShopId)) {
     renderLog("Sai dinh dang Mongo Shop ID. Phai la 24 ky tu hex.");
@@ -389,19 +395,25 @@ btnSaveCfg.addEventListener("click", () => {
     {
       mongoShopId,
       backendUrl,
-      etsyAdsBackendUrl
+      etsyAdsBackendUrl,
+      lngWebBeApiBaseUrl,
+      extensionToken
     },
     () => {
       renderLog("Da luu config:", {
         mongoShopId,
         backendUrl,
-        etsyAdsBackendUrl
+        etsyAdsBackendUrl,
+        lngWebBeApiBaseUrl,
+        extensionToken: extensionToken ? "[configured]" : ""
       });
 
       console.log("[LNG][popup] saved config", {
         mongoShopId,
         backendUrl,
-        etsyAdsBackendUrl
+        etsyAdsBackendUrl,
+        lngWebBeApiBaseUrl,
+        extensionToken: extensionToken ? "[configured]" : ""
       });
     }
   );

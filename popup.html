@@ -277,6 +277,13 @@
   <input id="backendUrl" type="text" placeholder="https://api.lngmerch.co/api/etsy/" />
   <div class="hint">Endpoint POST tạo từng order.</div>
 
+  <label for="lngWebBeApiBaseUrl">LNG Web BE API URL</label>
+  <input id="lngWebBeApiBaseUrl" type="url" placeholder="https://api.lngmerch.co" />
+
+  <label for="extensionToken">Extension Token</label>
+  <input id="extensionToken" type="password" autocomplete="off" placeholder="lng_ext_..." />
+  <div class="hint">Dùng cho Orders và Ads qua LNG Web BE. Token không được gửi vào log.</div>
+
   <div class="main-actions">
     <button id="btnSaveCfg" class="secondary">💾 Save config</button>
     <button id="btnOpenTriggerModal">🖱️ Trigger</button>
