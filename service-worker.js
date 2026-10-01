@@ -14,6 +14,9 @@ import {
     waitForTabCompleteWithTimeout
 } from "./service-worker-tab-utils.mjs";
 import { distributeCustomFilesByItem } from "./etsy-custom-file-mapping.mjs";
+import { createLngWebBeCommandClient } from "./lng-web-be-command-client.mjs";
+import { executeNextLngWebBeCommand } from "./lng-web-be-agent.mjs";
+import { toEtsyAdsCsv, toEtsySoldOrderItemsCsv } from "./lng-web-be-import-csv.mjs";
 
 
 const CONFIG = {
@@ -38,6 +41,9 @@ const ETSY_MESSAGE_SNAPSHOT_KEY = "etsyMessageSyncSnapshot";
 const ETSY_MESSAGE_MONITOR_DEBUG_LOGS_KEY = "etsyMessageMonitorDebugLogs";
 const ETSY_PROCESSED_ORDER_IDS_KEY = "etsyProcessedOrderIdsByShop";
 const ETSY_PROCESSED_ORDER_IDS_LIMIT = 500;
+const LNG_WEB_BE_COMMAND_ALARM = "LNG_WEB_BE_COMMANDS";
+const LNG_WEB_BE_CLIENT_ID_KEY = "lngWebBeClientId";
+let lngWebBeAgentRunning = false;
 let etsyAutoConfigLastSnapshot = {
     fetchedAt: null,
     records: [],
@@ -64,6 +70,97 @@ startEtsyMessageMonitorAlarm()
     .catch((error) => {
         console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][BOOTSTRAP_ALARM_ERROR]", error);
     });
+
+async function getLngWebBeAgentConfig() {
+    const saved = await chrome.storage.local.get([
+        "lngWebBeApiBaseUrl",
+        "extensionToken",
+        LNG_WEB_BE_CLIENT_ID_KEY,
+        "socketLabel"
+    ]);
+    let clientId = String(saved[LNG_WEB_BE_CLIENT_ID_KEY] || "").trim();
+    if (!clientId) {
+        clientId = crypto.randomUUID();
+        await chrome.storage.local.set({ [LNG_WEB_BE_CLIENT_ID_KEY]: clientId });
+    }
+    return {
+        apiBaseUrl: saved.lngWebBeApiBaseUrl || "https://api.lngmerch.co",
+        extensionToken: saved.extensionToken || "",
+        clientId,
+        label: String(saved.socketLabel || "LNG Etsy Worker").trim(),
+        version: chrome.runtime.getManifest().version
+    };
+}
+
+async function runLngWebBeAgentOnce() {
+    if (lngWebBeAgentRunning) return { ok: false, skipped: true, reason: "AGENT_RUNNING" };
+    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+    if (!await client.isConfigured()) return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
+
+    lngWebBeAgentRunning = true;
+    try {
+        return await executeNextLngWebBeCommand({
+            client,
+            executeOrders: async ({ commandId, numDays }) => {
+                const data = await handleGetEtsyOrdersAndPush({
+                    taskId: commandId,
+                    taskType: "IMPORT_NEW_ORDERS",
+                    maxTotalOrders: Math.min(Math.max(Number(numDays || 1) * 50, 1), 200),
+                    pushOrders: async (orders) => {
+                        const upload = await client.uploadCsv(
+                            "/api/integration/external-order-imports/etsy-sold-order-items",
+                            `etsy-orders-${commandId}.csv`,
+                            toEtsySoldOrderItemsCsv(orders),
+                            commandId,
+                            { marketplaceCode: "ETSY_US" }
+                        );
+                        return { importJobId: upload.id || upload.jobId || null, processedOrderIds: orders.map((order) => String(order.orderId || "")) };
+                    }
+                });
+                return { importJobId: data.push?.importJobId || null, importedCount: data.totalOrders, failedCount: 0 };
+            },
+            executeAds: async ({ commandId, dateFrom, dateTo }) => {
+                if (!dateFrom || dateFrom !== dateTo) throw new Error("Ads commands must contain exactly one date");
+                const data = await handleEtsyAdsImportDay({
+                    date: dateFrom,
+                    taskId: commandId,
+                    taskType: "IMPORT_ADS_SPEND",
+                    pushAds: async ({ rows }) => {
+                        const upload = await client.uploadCsv(
+                            "/api/finance/imports/ads",
+                            `etsy-ads-${commandId}.csv`,
+                            toEtsyAdsCsv(rows),
+                            commandId,
+                            { salesChannelCode: "ETSY", marketplaceCode: "ETSY_US", sourceRef: `etsy-ads:${dateFrom}`, dryRun: false }
+                        );
+                        return { importJobId: upload.importBatchId || upload.id || null };
+                    }
+                });
+                return { importJobId: data.push?.importJobId || null, importedCount: data.rows, failedCount: 0 };
+            }
+        });
+    } finally {
+        lngWebBeAgentRunning = false;
+    }
+}
+
+async function startLngWebBeAgent() {
+    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+    if (!await client.isConfigured()) {
+        await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
+        return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
+    }
+    await chrome.alarms.create(LNG_WEB_BE_COMMAND_ALARM, { delayInMinutes: 1, periodInMinutes: 1 });
+    try {
+        return await runLngWebBeAgentOnce();
+    } catch (error) {
+        if (error?.status === 401 || error?.status === 403) {
+            await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
+        }
+        console.error("[LNG][sw][LNG_WEB_BE_AGENT]", { code: error?.code || null, status: error?.status || null, message: error?.message || String(error) });
+        return { ok: false, error: error?.code || "LNG_WEB_BE_AGENT_FAILED" };
+    }
+}
 
 function getServiceLogPrefixFromMessage(message = "") {
     const value = String(message || "").toUpperCase();
@@ -1541,6 +1638,19 @@ async function handleSocketTask(task, context = {}) {
             taskType
         });
 
+        const isTrackingTask = taskType === "ETSY_UPLOAD_TRACKING" || taskType === "UPLOAD_TRACKING";
+        const apiAgent = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+        if (!isTrackingTask && await apiAgent.isConfigured()) {
+            return {
+                ok: false,
+                skipped: true,
+                reason: "LNG_WEB_BE_AGENT_MODE",
+                taskId,
+                taskTypeRaw,
+                taskType
+            };
+        }
+
         if (taskType === "IMPORT_ORDERS") {
             return await handleImportOrdersSocketTask(task);
         }
@@ -2628,6 +2738,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.runtime.onStartup.addListener(() => {
     autoConnectSocketIfReady();
+    startLngWebBeAgent();
     startEtsyMessageMonitorAlarm().catch((error) => {
         console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][STARTUP_ERROR]", error);
     });
@@ -2641,6 +2752,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.runtime.onInstalled.addListener(() => {
     autoConnectSocketIfReady();
+    startLngWebBeAgent();
     startEtsyMessageMonitorAlarm().catch((error) => {
         console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][INSTALLED_ERROR]", error);
     });
@@ -2655,7 +2767,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
 
-    const relevantKeys = ["mongoShopId", "backendUrl", "etsyAdsBackendUrl"];
+    const relevantKeys = ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken", "socketLabel"];
     const changedKeys = Object.keys(changes || {}).filter((key) => relevantKeys.includes(key));
 
     if (!changedKeys.length) return;
@@ -2670,9 +2782,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
             message: error?.message || String(error)
         });
     });
+    if (changedKeys.some((key) => ["lngWebBeApiBaseUrl", "extensionToken", "socketLabel"].includes(key))) {
+        startLngWebBeAgent();
+    }
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm?.name === LNG_WEB_BE_COMMAND_ALARM) {
+        startLngWebBeAgent();
+        return;
+    }
     if (alarm?.name === ETSY_MESSAGE_MONITOR_ALARM) {
         if (ETSY_MESSAGE_MONITOR_AUTO_ENABLED !== true) {
             chrome.alarms.clear(ETSY_MESSAGE_MONITOR_ALARM).catch(() => {});
@@ -2706,6 +2825,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 async function handleGetEtsyOrdersAndPush(payload = {}) {
     const mongoShopId = String(payload.mongoShopId || "").trim();
+    const pushOrders = typeof payload.pushOrders === "function" ? payload.pushOrders : null;
     const backendUrl = String(payload.backendUrl || CONFIG.DEFAULT_BACKEND_URL).trim();
     const taskId = String(payload.taskId || `import_orders:${mongoShopId}:${Date.now()}`).trim();
     const taskType = String(payload.taskType || "IMPORT_ORDERS").trim();
@@ -2715,7 +2835,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
     const maxAutoDomDetailOrders = Number(payload.maxAutoDomDetailOrders || 10);
     const forceDomCustomFileScan = payload.forceDomCustomFileScan === true;
 
-    if (!mongoShopId || !/^[a-f0-9]{24}$/i.test(mongoShopId)) {
+    if (!pushOrders && (!mongoShopId || !/^[a-f0-9]{24}$/i.test(mongoShopId))) {
         throw new Error("Thieu mongoShopId hop le (ObjectId 24-hex)");
     }
 
@@ -2771,7 +2891,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
 
     const etsyData = contentResponse.data;
     const fetchedOrders = etsyData.orders || [];
-    const processedOrderIds = targetOrderId ? new Set() : await getProcessedEtsyOrderIds(mongoShopId);
+    const processedOrderIds = targetOrderId || pushOrders ? new Set() : await getProcessedEtsyOrderIds(mongoShopId);
     const backendOrders = targetOrderId
         ? fetchedOrders
         : fetchedOrders.filter((order) => !processedOrderIds.has(String(order?.orderId || "")));
@@ -2847,9 +2967,11 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         }
     });
 
-    // Stamp shopId (Mongo ObjectId) vao moi don truoc khi POST
-    for (const o of backendOrders) {
-        o.shopId = mongoShopId;
+    // Legacy Socket transport owns its submitted shop id; the API agent is token scoped.
+    if (!pushOrders) {
+        for (const o of backendOrders) {
+            o.shopId = mongoShopId;
+        }
     }
 
     await logServiceEvent({
@@ -2868,8 +2990,10 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
         }
     });
 
-    const pushResult = await pushOrdersToBackend(backendOrders, backendUrl);
-    await rememberProcessedEtsyOrderIds(mongoShopId, pushResult.processedOrderIds);
+    const pushResult = pushOrders
+        ? await pushOrders(backendOrders)
+        : await pushOrdersToBackend(backendOrders, backendUrl);
+    if (!pushOrders) await rememberProcessedEtsyOrderIds(mongoShopId, pushResult.processedOrderIds);
 
     await logServiceEvent({
         service: "IMPORT_ORDERS",
@@ -4828,6 +4952,7 @@ const etsyAdsJobLocks = new Map();
 async function handleEtsyAdsImportDay(payload) {
     const date = toLocalYMD(String(payload.date || "").trim());
     const mongoShopId = String(payload.mongoShopId || "").trim();
+    const pushAds = typeof payload.pushAds === "function" ? payload.pushAds : null;
     const taskId = String(payload.taskId || `etsy_ads:${mongoShopId}:${date || Date.now()}`).trim();
     const taskType = String(payload.taskType || "ETSY_ADS").trim();
     const etsyAdsBackendUrl = String(
@@ -4849,7 +4974,7 @@ async function handleEtsyAdsImportDay(payload) {
         throw new Error("Etsy Ads date phải đúng định dạng YYYY-MM-DD");
     }
 
-    if (!mongoShopId || !/^[a-f0-9]{24}$/i.test(mongoShopId)) {
+    if (!pushAds && (!mongoShopId || !/^[a-f0-9]{24}$/i.test(mongoShopId))) {
         throw new Error("Thiếu mongoShopId hợp lệ");
     }
 
@@ -4861,7 +4986,7 @@ async function handleEtsyAdsImportDay(payload) {
         throw new Error("filterMode phai la spend_only hoac full_stats");
     }
 
-    const lockKey = `etsy_ads:${mongoShopId}:${date}`;
+    const lockKey = `etsy_ads:${mongoShopId || "api-agent"}:${date}`;
 
     if (etsyAdsJobLocks.has(lockKey)) {
         return {
@@ -4887,7 +5012,8 @@ async function handleEtsyAdsImportDay(payload) {
                 debugCompareDateOffset,
                 debugCompareMaxPages,
                 taskId,
-                taskType
+                taskType,
+                pushAds
             }).catch(async (error) => {
                 await logServiceEvent({
                     service: "ETSY_ADS",
@@ -4930,7 +5056,8 @@ async function runEtsyAdsImportDay({
     debugCompareDateOffset = false,
     debugCompareMaxPages = 2,
     taskId = "",
-    taskType = "ETSY_ADS"
+    taskType = "ETSY_ADS",
+    pushAds = null
 }) {
     const runId = [
         "etsy_ads",
@@ -5108,13 +5235,15 @@ async function runEtsyAdsImportDay({
             }
         });
 
-        push = await pushEtsyAdsToBackend({
-            etsyAdsBackendUrl,
-            mongoShopId,
-            date,
-            data: etsyAdsData,
-            sourceMeta
-        });
+        push = pushAds
+            ? await pushAds({ rows: etsyAdsData.rows || [], data: etsyAdsData, sourceMeta })
+            : await pushEtsyAdsToBackend({
+                etsyAdsBackendUrl,
+                mongoShopId,
+                date,
+                data: etsyAdsData,
+                sourceMeta
+            });
         await logServiceEvent({
             service: "ETSY_ADS",
             logType: "task_completed",
