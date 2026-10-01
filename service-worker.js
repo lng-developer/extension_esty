@@ -43,6 +43,7 @@ const ETSY_PROCESSED_ORDER_IDS_KEY = "etsyProcessedOrderIdsByShop";
 const ETSY_PROCESSED_ORDER_IDS_LIMIT = 500;
 const LNG_WEB_BE_COMMAND_ALARM = "LNG_WEB_BE_COMMANDS";
 const LNG_WEB_BE_CLIENT_ID_KEY = "lngWebBeClientId";
+const LNG_WEB_BE_AGENT_STATUS_KEY = "lngWebBeAgentStatus";
 let lngWebBeAgentRunning = false;
 let etsyAutoConfigLastSnapshot = {
     fetchedAt: null,
@@ -156,15 +157,19 @@ async function startLngWebBeAgent() {
     const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
     if (!await client.isConfigured()) {
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
+        await chrome.storage.local.set({ [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONFIGURATION_REQUIRED" });
         return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
     }
     await chrome.alarms.create(LNG_WEB_BE_COMMAND_ALARM, { delayInMinutes: 1, periodInMinutes: 1 });
     try {
-        return await runLngWebBeAgentOnce();
+        const result = await runLngWebBeAgentOnce();
+        await chrome.storage.local.set({ [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONNECTED" });
+        return result;
     } catch (error) {
         if (error?.status === 401 || error?.status === 403) {
             await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
         }
+        await chrome.storage.local.set({ [LNG_WEB_BE_AGENT_STATUS_KEY]: error?.status === 401 || error?.status === 403 ? "TOKEN_REJECTED" : "RETRYING" });
         console.error("[LNG][sw][LNG_WEB_BE_AGENT]", { code: error?.code || null, status: error?.status || null, message: error?.message || String(error) });
         return { ok: false, error: error?.code || "LNG_WEB_BE_AGENT_FAILED" };
     }

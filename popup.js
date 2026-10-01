@@ -6,6 +6,7 @@ const inputShopId = document.getElementById("mongoShopId");
 const inputBackend = document.getElementById("backendUrl");
 const inputLngWebBeApiBaseUrl = document.getElementById("lngWebBeApiBaseUrl");
 const inputExtensionToken = document.getElementById("extensionToken");
+const lngWebBeAgentStatus = document.getElementById("lngWebBeAgentStatus");
 const inputReimportOrderId = document.getElementById("reimportOrderId");
 const btnUploadTracking = document.getElementById("btnUploadTracking");
 const inputTrackingOrderId = document.getElementById("trackingOrderId");
@@ -342,12 +343,21 @@ async function reloadAutoConfig() {
 
 // Load config tu storage
 chrome.storage.local.get(
-  ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken"],
+  ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken", "lngWebBeAgentStatus"],
   (cfg) => {
     inputShopId.value = cfg.mongoShopId || "";
     inputBackend.value = cfg.backendUrl || DEFAULT_BACKEND_URL;
     if (inputLngWebBeApiBaseUrl) inputLngWebBeApiBaseUrl.value = cfg.lngWebBeApiBaseUrl || "https://api.lngmerch.co";
     if (inputExtensionToken) inputExtensionToken.value = cfg.extensionToken || "";
+    if (lngWebBeAgentStatus) {
+      const statusText = {
+        CONNECTED: "LNG Web BE agent: connected",
+        TOKEN_REJECTED: "LNG Web BE agent: token bị từ chối — kiểm tra hoặc cấp lại token.",
+        RETRYING: "LNG Web BE agent: lỗi tạm thời, sẽ thử lại.",
+        CONFIGURATION_REQUIRED: "LNG Web BE agent: cần API URL và Extension Token hợp lệ.",
+      };
+      lngWebBeAgentStatus.textContent = statusText[cfg.lngWebBeAgentStatus] || "";
+    }
 
     if (inputEtsyAdsBackendUrl) {
       inputEtsyAdsBackendUrl.value =
