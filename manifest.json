@@ -12,18 +12,21 @@
   ],
   "host_permissions": [
     "https://www.etsy.com/*",
+    "https://*.etsystatic.com/*",
     "https://api.lngmerch.co/*",
-    "http://localhost:5000/*"
+    "http://localhost:5000/*",
+    "http://localhost:3000/*",
+    "http://192.168.1.3:3000/*"
   ],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
   },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "LNG Worker"
+    "default_popup": "orders-popup.html",
+    "default_title": "LNG · Đơn hàng Etsy"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.lngmerch.co http://localhost:5000 wss://api.lngmerch.co ws://localhost:5000"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.etsy.com https://*.etsystatic.com https://api.lngmerch.co http://localhost:3000 http://localhost:5000 http://192.168.1.3:3000 wss://api.lngmerch.co ws://localhost:5000"
   }
 }

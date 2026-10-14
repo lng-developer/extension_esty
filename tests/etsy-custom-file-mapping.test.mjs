@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { distributeCustomFilesByItem } from "../etsy-custom-file-mapping.mjs";
 
-test("distributes one uploaded image to each upload-bearing order item in DOM order", () => {
+test("does not guess file ownership from equal item and image counts", () => {
     const assignments = distributeCustomFilesByItem(
         [
             { transactionId: "tx-1", listingId: "listing-1" },
@@ -24,13 +24,12 @@ test("distributes one uploaded image to each upload-bearing order item in DOM or
     assert.deepEqual(assignments.map(({ transactionId, files }) => ({
         transactionId,
         fileNames: files.map((file) => file.fileName)
-    })), [
-        { transactionId: "tx-1", fileNames: ["IMG_3374.jpeg"] },
-        { transactionId: "tx-2", fileNames: ["IMG_3373.jpeg"] },
-        { transactionId: "tx-3", fileNames: ["IMG_3372.jpeg"] },
-        { transactionId: "tx-4", fileNames: ["IMG_3371.jpeg"] },
-        { transactionId: "tx-5", fileNames: ["IMG_3370.jpeg"] }
-    ]);
+    })), []);
+});
+
+test('maps reordered files using explicit transaction evidence', () => {
+    const result = distributeCustomFilesByItem([{ transactionId: 'a' }, { transactionId: 'b' }], [{ transactionId: 'b', fileName: 'b.png' }, { transactionId: 'a', fileName: 'a.png' }]);
+    assert.deepEqual(result.map((item) => item.files[0].fileName), ['a.png', 'b.png']);
 });
 
 test("does not guess a per-item mapping when Etsy returns a different number of images", () => {

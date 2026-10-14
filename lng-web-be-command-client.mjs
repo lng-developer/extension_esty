@@ -17,12 +17,12 @@ function assertToken(value) {
 }
 
 export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
-  async function request(path, body) {
+  async function request(path, body, method = 'POST', root = COMMAND_ROOT) {
     const cfg = await getConfig();
     const apiBaseUrl = normalizeBaseUrl(cfg.apiBaseUrl);
     const extensionToken = assertToken(cfg.extensionToken);
-    const response = await fetchImpl(`${apiBaseUrl}${COMMAND_ROOT}${path}`, {
-      method: "POST",
+    const response = await fetchImpl(`${apiBaseUrl}${root}${path}`, {
+      method,
       headers: {
         Authorization: `Bearer ${extensionToken}`,
         "Content-Type": "application/json",
@@ -53,7 +53,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
     const extensionToken = assertToken(cfg.extensionToken);
     const form = new FormData();
     for (const [key, value] of Object.entries(fields)) form.set(key, String(value));
-    form.set("file", new Blob([csv], { type: "text/csv" }), filename);
+    form.set("file", csv instanceof Blob ? csv : new Blob([csv], { type: "text/csv" }), filename);
     const response = await fetchImpl(`${apiBaseUrl}${path}`, {
       method: "POST",
       headers: {
@@ -93,5 +93,14 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/complete`, await agentBody(payload));
     },
     uploadCsv,
+    getImportProgress(jobId) {
+      return request(`/${encodeURIComponent(jobId)}/progress`, undefined, 'GET', '/api/integration/external-order-imports');
+    },
+    uploadImportAsset(jobId, blob, filename, sha256) {
+      return uploadCsv(`/api/integration/external-order-imports/${encodeURIComponent(jobId)}/etsy-assets`, filename, blob, sha256, { sha256 });
+    },
+    attachManifest(jobId, entries) {
+      return request(`/${encodeURIComponent(jobId)}/etsy-customization-manifest`, { entries }, 'POST', '/api/integration/external-order-imports');
+    },
   };
 }

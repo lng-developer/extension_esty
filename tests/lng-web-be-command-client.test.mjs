@@ -3,6 +3,19 @@ import test from "node:test";
 
 import { createLngWebBeCommandClient } from "../lng-web-be-command-client.mjs";
 
+test('reads job progress with authenticated GET', async () => {
+  const client = createLngWebBeCommandClient({
+    getConfig: async () => ({ apiBaseUrl: 'https://api.example.test', extensionToken: 'lng_ext_valid' }),
+    fetchImpl: async (url, options) => {
+      assert.equal(url, 'https://api.example.test/api/integration/external-order-imports/job-1/progress');
+      assert.equal(options.method, 'GET');
+      assert.equal(options.headers.Authorization, 'Bearer lng_ext_valid');
+      return { ok: true, json: async () => ({ success: true, data: { isTerminal: false } }) };
+    },
+  });
+  assert.deepEqual(await client.getImportProgress('job-1'), { isTerminal: false });
+});
+
 test("sends the Extension Token as bearer authentication for heartbeat", async () => {
   const calls = [];
   const client = createLngWebBeCommandClient({

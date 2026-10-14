@@ -1,7 +1,7 @@
 function completionPayload(leaseToken, result) {
   return {
     leaseToken,
-    success: true,
+    success: result.success !== false,
     importJobId: result.importJobId || null,
     importedCount: Number(result.importedCount || 0),
     failedCount: Number(result.failedCount || 0),

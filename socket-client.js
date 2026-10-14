@@ -159,6 +159,7 @@ export async function pullPendingTasksNow() {
 }
 
 export async function connectSocket(force = false) {
+    if ((await chrome.storage.local.get('etsyManualMode')).etsyManualMode) return { ok: false, skipped: true, reason: 'MANUAL_MODE' };
     console.log("[LNG][SOCKET] connectSocket called", { force });
     if (connectBusy) {
         return {

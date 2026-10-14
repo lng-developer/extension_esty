@@ -13,33 +13,47 @@ const ORDER_HEADERS = [
   "Order ID", "Transaction ID", "Listing ID", "SKU", "Item Name", "Quantity", "Variations", "Personalization",
   "Price", "Item Total", "Order Sales Tax", "Order Shipping", "Currency", "Date Paid", "Sale Date",
   "Ship Name", "Ship Address1", "Ship Address2", "Ship City", "Ship State", "Ship Zipcode", "Ship Country",
+  "LNG Expected Files", "LNG Needs Review",
 ];
 
 export function toEtsySoldOrderItemsCsv(orders = []) {
-  const rows = orders.flatMap((order) => (order?.items || []).map((item) => [
+  const rows = orders.flatMap((order) => (order?.items || []).map((item, index) => {
+    if (!String(order.orderId || order.id || '').trim()) throw new Error('Order ID is required');
+    if (!String(item.transactionId || item.externalItemId || '').trim()) throw new Error('Transaction ID is required');
+    const shipping = order.shipping || {};
+    const variations = (typeof item.variations === 'object'
+      ? Object.entries(item.variations || {}).map(([key, value]) => `${key}: ${value}`).join(', ')
+      : item.variations) || item.variantRaw || item.variationsRaw;
+    const personalization = item.personalization ?? (item.customizations?.textFields || [])
+      .map(({ name, value }) => `${name || 'Personalization'}: ${value ?? ''}`).join('\n');
+    const quantity = item.quantity ?? 1;
+    const price = item.unitPrice ?? item.price ?? (item.itemTotal == null ? undefined : item.itemTotal / quantity);
+    return [
     order.orderId || order.id,
     item.transactionId || item.externalItemId,
     item.listingId || item.externalListingId,
     item.sku,
     item.itemName || item.title,
-    item.quantity || 1,
-    item.variations || item.variantRaw,
-    item.personalization,
-    item.price,
-    item.itemTotal || item.price,
-    item.orderSalesTax,
-    item.orderShipping,
+    quantity,
+    variations,
+    personalization,
+    price,
+    item.itemTotal ?? (price == null ? undefined : price * quantity),
+    index === 0 ? order.totals?.orderSalesTax ?? order.totals?.salesTax ?? item.orderSalesTax ?? 0 : 0,
+    index === 0 ? order.totals?.orderShipping ?? order.totals?.shipping ?? item.orderShipping ?? 0 : 0,
     item.currency || order.currency || "USD",
     order.paidAt || order.orderedAt,
     order.saleDate || order.orderedAt,
-    order.shipName || order.buyerName,
-    order.shipAddress1,
-    order.shipAddress2,
-    order.shipCity,
-    order.shipState,
-    order.shipZipcode,
-    order.shipCountry,
-  ]));
+    shipping.name || order.shipName || order.buyerName,
+    shipping.address1 ?? order.shipAddress1,
+    shipping.address2 ?? order.shipAddress2,
+    shipping.city ?? order.shipCity,
+    shipping.state ?? order.shipState,
+    shipping.zipcode ?? order.shipZipcode,
+    shipping.country ?? order.shipCountry,
+    (item.customFiles || []).length,
+    Boolean(item.customFilesNeedsReview),
+  ]; }));
   return csv(ORDER_HEADERS, rows);
 }
 

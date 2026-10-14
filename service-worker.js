@@ -17,6 +17,7 @@ import { distributeCustomFilesByItem } from "./etsy-custom-file-mapping.mjs";
 import { createLngWebBeCommandClient } from "./lng-web-be-command-client.mjs";
 import { executeNextLngWebBeCommand } from "./lng-web-be-agent.mjs";
 import { toEtsyAdsCsv, toEtsySoldOrderItemsCsv } from "./lng-web-be-import-csv.mjs";
+import { waitForEtsyImport, resumeEtsyImport, originalEtsyFileUrl } from "./etsy-import-runner.mjs";
 
 
 const CONFIG = {
@@ -45,6 +46,84 @@ const LNG_WEB_BE_COMMAND_ALARM = "LNG_WEB_BE_COMMANDS";
 const LNG_WEB_BE_CLIENT_ID_KEY = "lngWebBeClientId";
 const LNG_WEB_BE_AGENT_STATUS_KEY = "lngWebBeAgentStatus";
 let lngWebBeAgentRunning = false;
+let etsyManualRunning = false;
+async function isEtsyManualMode() { return Boolean((await chrome.storage.local.get('etsyManualMode')).etsyManualMode); }
+async function manualConfig() {
+    const { etsyManualConfig: config } = await chrome.storage.session.get('etsyManualConfig');
+    if (!config?.extensionToken) throw new Error('Nhập lại Extension Token cho phiên Chrome này');
+    return config;
+}
+function manualScope(config) { return `${config.apiBaseUrl}|${config.shopId}`; }
+async function saveManualRun(run) { await chrome.storage.local.set({ etsyManualRun: run }); }
+async function downloadManualFile(file) {
+    const url = new URL(originalEtsyFileUrl(file));
+    const response = await fetch(url.href, { credentials: 'include', redirect: 'error', signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw Object.assign(new Error('Etsy file download failed'), { status: response.status });
+    if (Number(response.headers.get('content-length')) > 10 * 1024 * 1024) throw Object.assign(new Error('Image too large'), { status: 400 });
+    const reader = response.body.getReader();
+    const chunks = []; let size = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 10 * 1024 * 1024) { await reader.cancel(); throw Object.assign(new Error('Image too large'), { status: 400 }); }
+        chunks.push(value);
+    }
+    return new Blob(chunks, { type: (response.headers.get('content-type') || '').split(';')[0].trim() });
+}
+
+async function handleManualMessage(action, payload) {
+    if (action === 'ETSY_MANUAL_CONFIG') {
+        if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
+        const apiBaseUrl = new URL(payload.apiBaseUrl).origin;
+        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://api.lngmerch.co'].includes(apiBaseUrl) || !/^[a-f\d]{24}$/i.test(payload.shopId) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
+        await chrome.storage.session.set({ etsyManualConfig: { apiBaseUrl, shopId: payload.shopId, extensionToken: payload.extensionToken } });
+        await chrome.storage.local.set({ etsyManualMode: true });
+        await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
+        await disconnectSocket();
+        return null;
+    }
+    const { etsyManualRun: run } = await chrome.storage.local.get('etsyManualRun');
+    if (action === 'ETSY_MANUAL_STATUS') return run || null;
+    if (etsyManualRunning) throw new Error('Import đang chạy');
+    if (action === 'ETSY_MANUAL_CLEAR') { await chrome.storage.local.remove('etsyManualRun'); return null; }
+    if (!await isEtsyManualMode()) throw new Error('Lưu cấu hình chế độ thủ công trước');
+    const config = await manualConfig();
+    if (etsyManualRunning) throw new Error('Import đang chạy');
+    if (action === 'ETSY_MANUAL_PULL') {
+        if (run && !['COMPLETED', 'PREVIEW'].includes(run.status)) throw new Error('Tiếp tục hoặc xóa checkpoint hiện tại trước');
+        etsyManualRunning = true;
+        try {
+            const limit = Math.min(200, Math.max(1, Number(payload.limit) || 10));
+            let capture;
+            await handleGetEtsyOrdersAndPush({ maxTotalOrders: limit, maxAutoDomDetailOrders: limit, pushOrders: async (orders) => {
+                capture = {
+                    id: crypto.randomUUID(), scope: manualScope(config), shopId: config.shopId,
+                    marketplaceCode: 'ETSY_US', limit, status: 'PREVIEW', orderCount: orders.length,
+                    itemCount: orders.reduce((n, order) => n + order.items.length, 0),
+                    csv: toEtsySoldOrderItemsCsv(orders),
+                    entries: orders.flatMap((order) => order.items
+                        .filter((item) => item.customFiles?.length || item.customFilesNeedsReview)
+                        .map((item) => ({ externalOrderId: String(order.orderId), externalItemId: String(item.transactionId),
+                            files: (item.customFiles || []).map((file) => ({ downloadUrl: file.downloadUrl, previewUrl: file.previewUrl })) }))),
+                };
+                await saveManualRun(capture);
+                return {};
+            } });
+            return capture;
+        } finally { etsyManualRunning = false; }
+    }
+    if (action === 'ETSY_MANUAL_IMPORT') {
+        if (!run) throw new Error('Kéo đơn trước');
+        etsyManualRunning = true;
+        const client = createLngWebBeCommandClient({ getConfig: async () => config });
+        resumeEtsyImport({ run, client, scope: manualScope(config), save: saveManualRun, downloadFile: downloadManualFile })
+            .catch(async (error) => { run.status = 'PAUSED'; run.error = error.code || 'IMPORT_INTERRUPTED'; await saveManualRun(run); })
+            .finally(() => { etsyManualRunning = false; });
+        return { started: true };
+    }
+    throw new Error('Unknown manual action');
+}
 let etsyAutoConfigLastSnapshot = {
     fetchedAt: null,
     records: [],
@@ -94,6 +173,7 @@ async function getLngWebBeAgentConfig() {
 }
 
 async function runLngWebBeAgentOnce() {
+    if (await isEtsyManualMode()) return { ok: true, skipped: true, reason: 'MANUAL_MODE' };
     if (lngWebBeAgentRunning) return { ok: false, skipped: true, reason: "AGENT_RUNNING" };
     const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
     if (!await client.isConfigured()) return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
@@ -126,7 +206,7 @@ async function runLngWebBeAgentOnce() {
                         return { importJobId: upload.id || upload.jobId || null, processedOrderIds: orders.map((order) => String(order.orderId || "")) };
                     }
                 });
-                return { importJobId: data.push?.importJobId || null, importedCount: data.totalOrders, failedCount: 0 };
+                return waitForEtsyImport(client, data.push?.importJobId);
             },
             executeAds: async ({ commandId, dateFrom, dateTo }) => {
                 if (!dateFrom || dateFrom !== dateTo) throw new Error("Ads commands must contain exactly one date");
@@ -154,6 +234,7 @@ async function runLngWebBeAgentOnce() {
 }
 
 async function startLngWebBeAgent() {
+    if (await isEtsyManualMode()) return { ok: true, skipped: true, reason: 'MANUAL_MODE' };
     const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
     if (!await client.isConfigured()) {
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
@@ -1617,6 +1698,7 @@ async function handleEtsyAutoConfigAlarm(alarm) {
 }
 
 async function handleSocketTask(task, context = {}) {
+    if (await isEtsyManualMode()) return { ok: false, reason: 'MANUAL_MODE' };
     const taskTypeRaw = String(task?.type || "").trim();
     const taskType = taskTypeRaw.toUpperCase();
     const taskId = String(
@@ -2485,6 +2567,11 @@ async function handleImportEtsyAdsWithListingsSocketTask(task) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (String(message?.action || '').startsWith('ETSY_MANUAL_')) {
+        if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('etsy-manual.html')) return false;
+        handleManualMessage(message.action, message.payload || {}).then((data) => sendResponse({ ok: true, data })).catch((error) => sendResponse({ ok: false, message: error.message }));
+        return true;
+    }
     console.log("[LNG][sw] onMessage", {
         action: message?.action,
         type: message?.type,
@@ -2768,7 +2855,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (await isEtsyManualMode()) return;
     if (alarm?.name === LNG_WEB_BE_COMMAND_ALARM) {
         startLngWebBeAgent();
         return;
@@ -3903,7 +3991,8 @@ async function scanTargetOrderDomCustomFiles({ targetOrderId, waitMs = 3000 }) {
         action: "CONTENT_ETSY_SCAN_ORDER_DETAIL_DOM_CUSTOM_FILES",
         payload: {
             targetOrderId,
-            waitMs
+            waitMs,
+            metadataOnly: await isEtsyManualMode()
         }
     }, {
         attempts: 3,
@@ -4107,6 +4196,13 @@ async function runAutoUploadDomDetailScan({
     const candidates = findOrdersNeedingDomCustomFileScan(backendOrders, {
         forceDomCustomFileScan
     });
+    // Missing scans must block readiness, including scans that fail or exceed the cap.
+    for (const candidate of candidates) {
+        const order = backendOrders.find((value) => String(value.orderId) === String(candidate.orderId));
+        for (const item of order?.items || []) {
+            if (candidate.items.some((value) => String(value.transactionId) === String(item.transactionId))) item.customFilesNeedsReview = true;
+        }
+    }
     const safeLimit = Math.max(0, Number.isFinite(Number(maxAutoDomDetailOrders)) ? Number(maxAutoDomDetailOrders) : 10);
     const limitedCandidates = candidates.slice(0, safeLimit);
     const summary = {
@@ -4160,6 +4256,17 @@ async function runAutoUploadDomDetailScan({
             });
 
             const assignments = distributeCustomFilesByItem(candidate.items, files);
+            for (const assignment of assignments) {
+                const order = backendOrders.find((value) => String(value.orderId) === String(candidate.orderId));
+                const item = order?.items?.find((value) => String(value.transactionId) === String(assignment.transactionId));
+                if (item) item.customFilesNeedsReview = false;
+            }
+            if (!assignments.length) {
+                const order = backendOrders.find((value) => String(value.orderId) === String(candidate.orderId));
+                for (const item of order?.items || []) {
+                    if (candidate.items.some((value) => String(value.transactionId) === String(item.transactionId))) item.customFilesNeedsReview = true;
+                }
+            }
             const mergeResult = assignments.reduce((result, assignment) => {
                 const itemResult = mergeDomCustomFilesIntoBackendOrders(backendOrders, { ...candidate, ...assignment }, assignment.files);
                 result.addedFiles += itemResult.addedFiles || 0;

@@ -192,6 +192,7 @@ function prefixLogMessage(message, prefix) {
 }
 
 export async function logExtensionEvent(event = {}) {
+    if ((await chrome.storage.local.get('etsyManualMode')).etsyManualMode) return;
     try {
         const stored = await getStoredLoggerConfig();
         const machineId = String(event.machineId || stored.machineId || "").trim();

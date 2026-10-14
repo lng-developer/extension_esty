@@ -10,10 +10,9 @@ export function distributeCustomFilesByItem(items = [], files = []) {
         return [{ ...safeItems[0], files: safeFiles }];
     }
 
-    if (safeItems.length !== safeFiles.length) return [];
-
-    return safeItems.map((item, index) => ({
+    if (safeFiles.some((file) => !file.transactionId || !safeItems.some((item) => String(item.transactionId) === String(file.transactionId)))) return [];
+    return safeItems.map((item) => ({
         ...item,
-        files: [safeFiles[index]]
-    }));
+        files: safeFiles.filter((file) => String(file.transactionId) === String(item.transactionId))
+    })).filter((item) => item.files.length);
 }

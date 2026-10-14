@@ -1900,7 +1900,7 @@ function scrollOrderDetailForCustomFiles() {
     };
 }
 
-async function scanOrderDetailDomForCustomFiles({ targetOrderId, waitMs = 3000 } = {}) {
+async function scanOrderDetailDomForCustomFiles({ targetOrderId, waitMs = 3000, metadataOnly = false } = {}) {
     const safeTargetOrderId = String(targetOrderId || "").trim();
     const safeWaitMs = Number.isFinite(Number(waitMs)) ? Number(waitMs) : 3000;
 
@@ -1927,7 +1927,7 @@ async function scanOrderDetailDomForCustomFiles({ targetOrderId, waitMs = 3000 }
 
         const probeUrls = buildIpfFullSizeCandidates(rawSrc);
         const probes = [];
-        for (const url of probeUrls) {
+        for (const url of metadataOnly ? [] : probeUrls) {
             probes.push(await probeImageSize(url));
         }
 
