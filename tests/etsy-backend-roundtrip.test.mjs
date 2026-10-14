@@ -25,3 +25,13 @@ test('collector CSV round-trips through paired BE parser and mapper', { skip: !e
   assert.equal(order.items[1].price.shippingPriceAmount, 0);
   assert.equal(order.items[1].price.itemTaxAmount, 0);
 });
+
+test('listing thumbnail survives CSV without becoming customer artwork', { skip: !existsSync(new URL(`${backend}manualExcel.parser.js`, import.meta.url)) }, () => {
+  const { parseUploadedOrderReport } = require(`${backend}manualExcel.parser.js`);
+  const { mapEtsySoldOrderItemRowsToExternalOrderDtos } = require(`${backend}etsySoldOrderItems.mapper.js`);
+  const csv = toEtsySoldOrderItemsCsv([{ orderId: '1', items: [{ transactionId: '2', baseImage: { imageUrl: 'https://i.etsystatic.com/123/r/il_75x75.jpg' } }] }]);
+  const [order] = mapEtsySoldOrderItemRowsToExternalOrderDtos(parseUploadedOrderReport(Buffer.from(csv), { originalFilename: 'etsy.csv' }).rows);
+  assert.equal(order.items[0].externalData.etsy.listingImageUrl, 'https://i.etsystatic.com/123/r/il_75x75.jpg');
+  assert.equal(order.items[0].externalData.etsy.listingImageThumbnailUrl, 'https://i.etsystatic.com/123/r/il_75x75.jpg');
+  assert.equal(order.items[0].customizationRawSummary.expectedFileCount, 0);
+});

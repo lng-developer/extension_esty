@@ -264,6 +264,8 @@ async function getEtsyOrders(payload = {}) {
         });
     }
 
+    await enrichOrdersWithListingImages({ orders, shopId: bootstrap.shopId });
+
     await enrichOrdersWithCustomData({
         orders,
         shopId: bootstrap.shopId,
@@ -724,8 +726,9 @@ async function fetchText(url) {
     return await response.text();
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, { signal } = {}) {
     const response = await fetch(url, {
+        signal,
         method: "GET",
         credentials: "include",
         headers: {
@@ -2658,6 +2661,44 @@ function mapOrders({ raw, shopName, orderStates }) {
     return orders;
 }
 
+function etsyImageIdentity(value) {
+    try {
+        const url = new URL(value);
+        if (url.protocol !== 'https:' || url.hostname !== 'i.etsystatic.com' || url.port || url.username || url.password) return null;
+        const match = url.pathname.match(/\/il_(\d+)x(?:\d+|N)\.(\d+)_/);
+        return match ? { url: url.href, width: Number(match[1]), id: match[2] } : null;
+    } catch (_) { return null; }
+}
+
+async function enrichOrdersWithListingImages({ orders, shopId }) {
+    const listings = new Map();
+    const deadline = Date.now() + 15000;
+    for (const order of orders || []) {
+        for (const item of order.orderItems || []) {
+            const thumbnail = etsyImageIdentity(item.productImage);
+            if (!thumbnail) continue;
+            item.productThumbnail = item.productImage;
+            const product = item.rawTransaction?.product || {};
+            let candidates = Object.values(product).filter((value) => typeof value === 'string');
+            if (thumbnail.width < 570 && /^\d+$/.test(String(item.listingId)) && /^\d+$/.test(String(shopId))) {
+                if (!listings.has(item.listingId) && Date.now() < deadline) {
+                    try {
+                        const response = await fetchJson(`https://www.etsy.com/api/v3/ajax/shop/${shopId}/listings/${item.listingId}`, { signal: AbortSignal.timeout(Math.max(1, Math.min(10000, deadline - Date.now()))) });
+                        const listing = response?.listing || response?.data || response || {};
+                        const images = listing.listing_images || listing.listingImages || listing.images || listing.Images || [];
+                        listings.set(item.listingId, Array.isArray(images) ? images.flatMap((image) => Object.values(image || {})).filter((value) => typeof value === 'string') : []);
+                    } catch (_) { listings.set(item.listingId, []); }
+                }
+                candidates = candidates.concat(listings.get(item.listingId) || []);
+            }
+            const best = candidates.map(etsyImageIdentity)
+                .filter((image) => image && image.id === thumbnail.id && image.width > thumbnail.width && image.width <= 1000)
+                .sort((a, b) => b.width - a.width)[0];
+            if (best) item.productImage = best.url;
+        }
+    }
+}
+
 function mapTransaction({ transaction, order }) {
     const product = transaction.product || {};
     const skuCandidates = {
@@ -2938,8 +2979,9 @@ function toBackendItem(it) {
 
         baseImage: {
             imageUrl: it.productImage || "",
-            width: 75,
-            height: 75
+            thumbnailUrl: it.productThumbnail || it.productImage || "",
+            width: etsyImageIdentity(it.productImage)?.width || null,
+            height: null
         }
     };
 }

@@ -14,6 +14,7 @@ const ORDER_HEADERS = [
   "Price", "Item Total", "Order Sales Tax", "Order Shipping", "Currency", "Date Paid", "Sale Date",
   "Ship Name", "Ship Address1", "Ship Address2", "Ship City", "Ship State", "Ship Zipcode", "Ship Country",
   "LNG Expected Files", "LNG Needs Review",
+  "LNG Listing Image", "LNG Listing Thumbnail",
 ];
 
 export function toEtsySoldOrderItemsCsv(orders = []) {
@@ -53,6 +54,8 @@ export function toEtsySoldOrderItemsCsv(orders = []) {
     shipping.country ?? order.shipCountry,
     (item.customFiles || []).length,
     Boolean(item.customFilesNeedsReview),
+    item.baseImage?.imageUrl || '',
+    item.baseImage?.thumbnailUrl || item.baseImage?.imageUrl || '',
   ]; }));
   return csv(ORDER_HEADERS, rows);
 }
