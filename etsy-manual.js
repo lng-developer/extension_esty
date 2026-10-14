@@ -30,8 +30,8 @@ function render(run) {
   $('status').textContent = run ? messages[run.status] || 'Trạng thái chưa xác định. Xem thông tin hỗ trợ.' : 'Chưa có dữ liệu. Bắt đầu với 1 đơn để kiểm tra.';
   $('status').dataset.error = String(['PAUSED', 'NEEDS_REVIEW'].includes(run?.status));
   $('result').textContent = run?.result ? `Item đã import: ${run.result.importedCount || 0} · Bỏ qua: ${run.result.skippedCount || 0} · Lỗi: ${run.result.failedCount || 0} · Ảnh lỗi: ${run.failedFiles ?? files.filter(file => file.error).length}` : 'Ảnh được tải lên backend sau khi bạn xác nhận import.';
-  $('target').textContent = savedConfig ? `Đích cấu hình: ${savedConfig.apiBaseUrl} · Shop ${savedConfig.shopId}` : 'Mở Cài đặt kết nối để nhập backend, Shop ID và token.';
-  $('connection').textContent = savedConfig ? 'Đã lưu cấu hình · chưa xác minh kết nối' : 'Cần cấu hình / token';
+  $('target').textContent = savedConfig ? `Đích cấu hình: ${savedConfig.apiBaseUrl} · Shop ${savedConfig.shopName || savedConfig.shopId}` : 'Mở Cài đặt kết nối để chọn backend và xác thực token.';
+  $('connection').textContent = savedConfig ? 'Đã xác thực khi lưu · bấm kết nối để kiểm tra lại' : 'Cần cấu hình / token';
   $('preview').textContent = run ? `Lượt kéo: ${run.id || '—'}\nJob: ${run.jobId || 'Chưa tạo'}\nShop lượt kéo: ${run.shopId || '—'}\nLỗi: ${run.error || 'Không'}\nManifest: ${(run.manifest || []).map(entry => `${entry.externalItemId}: ${entry.status}`).join(', ') || 'Chưa có'}` : 'Chưa có lượt kéo.';
   $('import').textContent = run && run.status !== 'PREVIEW' ? 'Tiếp tục import' : 'Xác nhận import';
   controls();
@@ -45,9 +45,10 @@ async function act(fn) {
 $('config').onsubmit = (event) => {
   event.preventDefault();
   act(async () => {
-    const config = { apiBaseUrl: $('base').value, shopId: $('shop').value.trim(), extensionToken: $('token').value.trim() };
-    await send('ETSY_MANUAL_CONFIG', config);
-    savedConfig = { apiBaseUrl: config.apiBaseUrl, shopId: config.shopId };
+    const config = { apiBaseUrl: $('base').value, extensionToken: $('token').value.trim() };
+    $('status').textContent = 'Đang xác thực token và nhận diện shop…';
+    savedConfig = await send('ETSY_MANUAL_CONFIG', config);
+    $('shop').value = `${savedConfig.shopName || 'Shop'} · ${savedConfig.shopId}`;
     $('token').value = '';
     $('settings').open = false;
     render(currentRun);
@@ -70,9 +71,12 @@ $('clear').onclick = () => act(async () => { if (confirm('Xóa preview/checkpoin
 act(async () => {
   const { etsyManualConfig } = await chrome.storage.session.get('etsyManualConfig');
   if (etsyManualConfig?.extensionToken) {
-    savedConfig = { apiBaseUrl: etsyManualConfig.apiBaseUrl, shopId: etsyManualConfig.shopId };
-    $('base').value = savedConfig.apiBaseUrl; $('shop').value = savedConfig.shopId;
-    $('settings').open = false;
+    $('base').value = etsyManualConfig.apiBaseUrl;
+    if (etsyManualConfig.shopName) {
+      savedConfig = { apiBaseUrl: etsyManualConfig.apiBaseUrl, shopId: etsyManualConfig.shopId, shopName: etsyManualConfig.shopName };
+      $('shop').value = `${savedConfig.shopName} · ${savedConfig.shopId}`;
+      $('settings').open = false;
+    }
   }
   render(await send('ETSY_MANUAL_STATUS'));
 });

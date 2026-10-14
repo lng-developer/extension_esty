@@ -17,7 +17,7 @@ async function page(run, config) {
   await new Promise(resolve => setImmediate(resolve));
   return document.getElementById;
 }
-const config = { apiBaseUrl: 'http://192.168.1.3:3000', shopId: '660000000000000000000201', extensionToken: 'lng_ext_test' };
+const config = { apiBaseUrl: 'http://192.168.1.3:3000', shopId: '660000000000000000000201', shopName: 'Test shop', extensionToken: 'lng_ext_test' };
 test('preview without a session token cannot start import', async () => {
   const get = await page({ status: 'PREVIEW', orderCount: 1, entries: [] });
   assert.equal(get('import').disabled, true);

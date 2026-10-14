@@ -76,12 +76,18 @@ async function handleManualMessage(action, payload) {
     if (action === 'ETSY_MANUAL_CONFIG') {
         if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
         const apiBaseUrl = new URL(payload.apiBaseUrl).origin;
-        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://api.lngmerch.co'].includes(apiBaseUrl) || !/^[a-f\d]{24}$/i.test(payload.shopId) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
-        await chrome.storage.session.set({ etsyManualConfig: { apiBaseUrl, shopId: payload.shopId, extensionToken: payload.extensionToken } });
+        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://api.lngmerch.co'].includes(apiBaseUrl) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
+        const identity = await createLngWebBeCommandClient({ getConfig: async () => ({ apiBaseUrl, extensionToken: payload.extensionToken }) }).getIdentity();
+        if (identity?.tokenType !== 'EXTENSION' || !/^[a-f\d]{24}$/i.test(identity.shop?.id)) throw new Error('Backend chưa hỗ trợ xác thực shop từ token. Cần cập nhật BE.');
+        if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
+        const { etsyManualRun: previousRun } = await chrome.storage.local.get('etsyManualRun');
+        if (previousRun && previousRun.status !== 'COMPLETED' && previousRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Lượt kéo thuộc backend/shop khác. Dùng token cũ hoặc xóa preview trước.');
+        const verified = { apiBaseUrl, shopId: identity.shop.id, shopName: identity.shop.name };
+        await chrome.storage.session.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken } });
         await chrome.storage.local.set({ etsyManualMode: true });
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
         await disconnectSocket();
-        return null;
+        return verified;
     }
     const { etsyManualRun: run } = await chrome.storage.local.get('etsyManualRun');
     if (action === 'ETSY_MANUAL_STATUS') return run || null;

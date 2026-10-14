@@ -93,6 +93,9 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/complete`, await agentBody(payload));
     },
     uploadCsv,
+    getIdentity() {
+      return request('/me', undefined, 'GET', '/api/auth');
+    },
     getImportProgress(jobId) {
       return request(`/${encodeURIComponent(jobId)}/progress`, undefined, 'GET', '/api/integration/external-order-imports');
     },

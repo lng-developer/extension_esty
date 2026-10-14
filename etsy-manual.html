@@ -5,9 +5,9 @@
 <details id="settings" class="panel" open><summary>Cài đặt kết nối <span id="connection">Chưa cấu hình</span></summary>
 <form id="config"><div class="form-grid">
 <label>Backend<select id="base"><option value="http://192.168.1.3:3000">Máy code · 192.168.1.3:3000</option><option>http://localhost:3000</option><option>http://localhost:5000</option><option value="https://api.lngmerch.co">Production · api.lngmerch.co</option></select></label>
-<label>Shop ID trong LNG<input id="shop" required pattern="[a-fA-F0-9]{24}" placeholder="ID gồm 24 ký tự" spellcheck="false"></label>
+<label>Shop trong LNG<input id="shop" readonly placeholder="Tự nhận diện sau khi xác thực token"><small>Shop Etsy trong Chrome vẫn cần được bạn kiểm tra đúng tài khoản.</small></label>
 <label class="wide">Extension Token<input id="token" type="password" required autocomplete="off" placeholder="lng_ext_…"><small>Chỉ giữ trong phiên Chrome. Không chia sẻ token.</small></label>
-</div><button id="save" type="submit">Lưu cấu hình</button><p class="hint">Lưu cấu hình bật chế độ thủ công và dừng nhận command/tracking nền. Địa chỉ LAN dùng HTTP: chỉ test trong mạng tin cậy.</p></form></details>
+</div><button id="save" type="submit">Xác thực token & kết nối</button><p class="hint">Kết nối thành công bật chế độ thủ công và dừng nhận command/tracking nền. Địa chỉ LAN dùng HTTP: chỉ test trong mạng tin cậy.</p></form></details>
 <section class="panel"><div class="section-heading"><div><span class="eyebrow">01 / LẤY DỮ LIỆU</span><h2>Kéo và xem trước</h2></div><label class="limit">Số đơn tối đa<input id="limit" type="number" min="1" max="200" value="1"></label></div>
 <p>Kiểm tra đúng shop Etsy trước khi kéo. Bước này chưa gửi đơn hoặc ảnh lên backend.</p><button id="pull" disabled>Kéo đơn từ Etsy</button><small class="hint">Giới hạn số đơn, không phải khoảng ngày hoặc mã đơn cụ thể.</small></section>
 <section class="panel"><div class="section-heading"><div><span class="eyebrow">02 / KIỂM TRA & IMPORT</span><h2>Kết quả lượt kéo</h2></div><button id="refresh" class="secondary">Xem tiến độ</button></div>

@@ -3,6 +3,20 @@ import test from "node:test";
 
 import { createLngWebBeCommandClient } from "../lng-web-be-command-client.mjs";
 
+test('gets token identity without sending a client selected shop', async () => {
+  const client = createLngWebBeCommandClient({
+    getConfig: async () => ({ apiBaseUrl: 'http://192.168.1.3:3000', extensionToken: 'lng_ext_test', shopId: 'untrusted' }),
+    fetchImpl: async (url, options) => {
+      assert.equal(url, 'http://192.168.1.3:3000/api/auth/me');
+      assert.equal(options.method, 'GET');
+      assert.equal(options.headers.Authorization, 'Bearer lng_ext_test');
+      assert.equal(options.body, undefined);
+      return { ok: true, json: async () => ({ success: true, data: { tokenType: 'EXTENSION', shop: { id: 'a', name: 'Test' } } }) };
+    },
+  });
+  assert.deepEqual(await client.getIdentity(), { tokenType: 'EXTENSION', shop: { id: 'a', name: 'Test' } });
+});
+
 test('reads job progress with authenticated GET', async () => {
   const client = createLngWebBeCommandClient({
     getConfig: async () => ({ apiBaseUrl: 'https://api.example.test', extensionToken: 'lng_ext_valid' }),
