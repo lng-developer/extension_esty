@@ -17,7 +17,7 @@ function assertToken(value) {
 }
 
 export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
-  async function request(path, body, method = 'POST', root = COMMAND_ROOT) {
+  async function request(path, body, method = 'POST', root = COMMAND_ROOT, timeoutMs) {
     const cfg = await getConfig();
     const apiBaseUrl = normalizeBaseUrl(cfg.apiBaseUrl);
     const extensionToken = assertToken(cfg.extensionToken);
@@ -28,6 +28,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload?.success) {
@@ -43,6 +44,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
       label: String(cfg.label || "").trim(),
       version: cfg.version || null,
       apiBaseUrl: normalizeBaseUrl(cfg.apiBaseUrl),
+      ...(cfg.provider === 'ETSY' ? { provider: 'ETSY', protocolVersion: 1 } : {}),
       ...extra,
     };
   }
@@ -88,6 +90,9 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
     },
     async start(commandId, leaseToken) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/start`, await agentBody({ leaseToken }));
+    },
+    async renew(commandId, leaseToken, { importJobId } = {}) {
+      return request(`/agent/commands/${encodeURIComponent(commandId)}/renew`, await agentBody({ leaseToken, ...(importJobId ? { importJobId } : {}) }), 'POST', COMMAND_ROOT, 5000);
     },
     async complete(commandId, payload) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/complete`, await agentBody(payload));

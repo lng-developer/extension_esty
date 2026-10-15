@@ -1,5 +1,13 @@
 # Test Etsy manual import
 
+## Web-requested Orders
+
+With BE protocol v1, configured manual mode also accepts **WEB Orders** from Integrations → Extensions → Automation. It advertises ETSY/protocolVersion 1 and only claims after backend acknowledgement. Select maximum 1 for the first explicit test; Orders auto-import with files/manifest, no manual confirmation required. Amazon day windows, Etsy schedules, Ads and tracking are not enabled by this workflow.
+
+An unfinished manual preview blocks remote claims. Remote work uses `etsyRemoteOrderRun`, separate from `etsyManualRun`; its lease stays in session storage, never local. Do not change shop/backend during an unfinished remote task. On worker restart, a live session lease resumes the same immutable CSV/key/job. Lost completion responses retry acknowledgement only. Closing Chrome/losing lease preserves evidence and blocks new claims until operator reconciliation; no recovery/reset UI is included yet.
+
+Update BE first, then FE, then extension. The earlier heartbeat-only description below applies only to a backend that does not acknowledge protocol v1. The manual Pull → Confirm Import flow below is unchanged when no remote task is active.
+
 Use a separate unpacked-extension Chrome profile. Do not replace the installed legacy worker or use production data for the first test.
 
 1. Run the paired `lng-web-be` branch `codex/etsy-extension-provider` with a test database, Redis and the external-order-import/customization/post-import workers. Keep vendor submission and tracking disabled.

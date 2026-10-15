@@ -4,8 +4,8 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../service-worker.js', import.meta.url), 'utf8');
 const handler = source.slice(source.indexOf('async function handleManualMessage('), source.indexOf('let etsyAutoConfigLastSnapshot'));
-function setup({ identity, run, failure } = {}) {
-  const session = {}; const local = { etsyManualRun: run }; let presenceStarted = false;
+function setup({ identity, run, remoteRun, failure } = {}) {
+  const session = {}; const local = { etsyManualRun: run, etsyRemoteOrderRun: remoteRun }; let presenceStarted = false;
   const ctx = vm.createContext({ URL, etsyManualRunning: false, lngWebBeAgentRunning: false, socketTaskLocks: new Set(), LNG_WEB_BE_COMMAND_ALARM: 'test',
     chrome: { storage: { session: { set: async value => Object.assign(session, value) }, local: { get: async () => local, set: async value => Object.assign(local, value) } }, alarms: { clear: async () => {} } },
     disconnectSocket: async () => {}, createLngWebBeCommandClient: () => ({ getIdentity: async () => { if (failure) throw failure; return identity; } }),
@@ -32,6 +32,11 @@ test('failed authentication does not save config', async () => {
 });
 test('cannot change shop while an unfinished capture exists', async () => {
   const app = setup({ identity: { tokenType: 'EXTENSION', shop }, run: { status: 'PAUSED', scope: 'http://192.168.1.3:3000|another-shop' } });
+  await assert.rejects(app.save(payload), /shop|backend/i);
+  assert.equal(app.session.etsyManualConfig, undefined);
+});
+test('cannot change shop while a remote checkpoint needs reconciliation', async () => {
+  const app = setup({ identity: { tokenType: 'EXTENSION', shop }, remoteRun: { scope: 'http://192.168.1.3:3000|another-shop' } });
   await assert.rejects(app.save(payload), /shop|backend/i);
   assert.equal(app.session.etsyManualConfig, undefined);
 });

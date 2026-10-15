@@ -18,6 +18,7 @@ import { createLngWebBeCommandClient } from "./lng-web-be-command-client.mjs";
 import { executeNextLngWebBeCommand } from "./lng-web-be-agent.mjs";
 import { toEtsyAdsCsv, toEtsySoldOrderItemsCsv } from "./lng-web-be-import-csv.mjs";
 import { waitForEtsyImport, resumeEtsyImport, originalEtsyFileUrl } from "./etsy-import-runner.mjs";
+import { createEtsyCapture, runRemoteEtsyOrders } from './etsy-remote-order-runner.mjs';
 
 
 const CONFIG = {
@@ -80,7 +81,8 @@ async function handleManualMessage(action, payload) {
         const identity = await createLngWebBeCommandClient({ getConfig: async () => ({ apiBaseUrl, extensionToken: payload.extensionToken }) }).getIdentity();
         if (identity?.tokenType !== 'EXTENSION' || !/^[a-f\d]{24}$/i.test(identity.shop?.id)) throw new Error('Backend chưa hỗ trợ xác thực shop từ token. Cần cập nhật BE.');
         if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
-        const { etsyManualRun: previousRun } = await chrome.storage.local.get('etsyManualRun');
+        const { etsyManualRun: previousRun, etsyRemoteOrderRun: remoteRun } = await chrome.storage.local.get(['etsyManualRun', 'etsyRemoteOrderRun']);
+        if (remoteRun && !remoteRun.acknowledged && remoteRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Remote checkpoint thuộc backend/shop khác; kiểm tra task cũ trước.');
         if (previousRun && previousRun.status !== 'COMPLETED' && previousRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Lượt kéo thuộc backend/shop khác. Dùng token cũ hoặc xóa preview trước.');
         const verified = { apiBaseUrl, shopId: identity.shop.id, shopName: identity.shop.name };
         await chrome.storage.session.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken } });
@@ -92,7 +94,7 @@ async function handleManualMessage(action, payload) {
     }
     const { etsyManualRun: run } = await chrome.storage.local.get('etsyManualRun');
     if (action === 'ETSY_MANUAL_STATUS') return run || null;
-    if (etsyManualRunning) throw new Error('Import đang chạy');
+    if (etsyManualRunning || lngWebBeAgentRunning || (await chrome.storage.session.get('etsyRemoteOrderLease')).etsyRemoteOrderLease) throw new Error('Import đang chạy');
     if (action === 'ETSY_MANUAL_CLEAR') { await chrome.storage.local.remove('etsyManualRun'); return null; }
     if (!await isEtsyManualMode()) throw new Error('Lưu cấu hình chế độ thủ công trước');
     const config = await manualConfig();
@@ -104,16 +106,7 @@ async function handleManualMessage(action, payload) {
             const limit = Math.min(200, Math.max(1, Number(payload.limit) || 10));
             let capture;
             await handleGetEtsyOrdersAndPush({ maxTotalOrders: limit, maxAutoDomDetailOrders: limit, pushOrders: async (orders) => {
-                capture = {
-                    id: crypto.randomUUID(), scope: manualScope(config), shopId: config.shopId,
-                    marketplaceCode: 'ETSY_US', limit, status: 'PREVIEW', orderCount: orders.length,
-                    itemCount: orders.reduce((n, order) => n + order.items.length, 0),
-                    csv: toEtsySoldOrderItemsCsv(orders),
-                    entries: orders.flatMap((order) => order.items
-                        .filter((item) => item.customFiles?.length || item.customFilesNeedsReview)
-                        .map((item) => ({ externalOrderId: String(order.orderId), externalItemId: String(item.transactionId),
-                            files: (item.customFiles || []).map((file) => ({ downloadUrl: file.downloadUrl, previewUrl: file.previewUrl })) }))),
-                };
+                capture = createEtsyCapture(orders, { id: crypto.randomUUID(), scope: manualScope(config), shopId: config.shopId, limit });
                 await saveManualRun(capture);
                 return {};
             } });
@@ -173,6 +166,7 @@ async function getLngWebBeAgentConfig() {
     const manual = await isEtsyManualMode();
     const { etsyManualConfig } = manual ? await chrome.storage.session.get('etsyManualConfig') : {};
     return {
+        ...(manual ? { provider: 'ETSY', protocolVersion: 1 } : {}),
         apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://api.lngmerch.co",
         extensionToken: manual ? etsyManualConfig?.extensionToken || "" : saved.extensionToken || "",
         clientId,
@@ -188,10 +182,10 @@ async function runLngWebBeAgentOnce() {
 
     lngWebBeAgentRunning = true;
     try {
-        // Manual mode reports presence only; never claim remote commands.
         if (await isEtsyManualMode()) {
-            await client.heartbeat();
-            return { ok: true, idle: true };
+            const agent = await client.heartbeat();
+            if (agent?.provider !== 'ETSY' || agent.protocolVersion !== 1) return { ok: true, idle: true };
+            return await runRemoteEtsyWorker(client);
         }
         return await executeNextLngWebBeCommand({
             client,
@@ -244,6 +238,86 @@ async function runLngWebBeAgentOnce() {
     } finally {
         lngWebBeAgentRunning = false;
     }
+}
+
+async function runRemoteEtsyWorker(client) {
+    const saved = await chrome.storage.local.get(['etsyManualRun', 'etsyRemoteOrderRun']);
+    if (etsyManualRunning || (saved.etsyManualRun && saved.etsyManualRun.status !== 'COMPLETED') || socketTaskLocks.size) return { ok: true, skipped: true, reason: 'MANUAL_BUSY' };
+    const config = await manualConfig();
+    const scope = manualScope(config);
+    let { etsyRemoteOrderLease: lease } = await chrome.storage.session.get('etsyRemoteOrderLease');
+    if (!lease && saved.etsyRemoteOrderRun && !saved.etsyRemoteOrderRun.acknowledged) return { ok: false, skipped: true, reason: 'REMOTE_INTERRUPTED' };
+    if (!lease) {
+        const claim = await client.claimNext();
+        if (!claim) return { ok: true, idle: true };
+        lease = { ...claim, scope };
+        await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
+    }
+    if (lease.scope !== scope) throw new Error('REMOTE_SCOPE_CHANGED');
+    const acknowledgeCompletion = async () => {
+        await client.complete(lease.command.id, { leaseToken: lease.leaseToken, ...lease.completion });
+        const { etsyRemoteOrderRun: run } = await chrome.storage.local.get('etsyRemoteOrderRun');
+        if (run) await chrome.storage.local.set({ etsyRemoteOrderRun: { ...run, acknowledged: true } });
+        await chrome.storage.session.remove('etsyRemoteOrderLease');
+        return { ok: true, result: lease.completion };
+    };
+    if (lease.completion) return acknowledgeCompletion();
+    let lost = false; let renewedAt = 0; let associatedJob; let renewing;
+    const assertLease = async (importJobId, force = false) => {
+        try {
+            const current = await manualConfig();
+            if (lost || manualScope(current) !== scope || current.extensionToken !== config.extensionToken) throw new Error('session changed');
+            if (renewing) await renewing;
+            if (force || Date.now() - renewedAt >= 60000 || (importJobId && associatedJob !== importJobId)) {
+                renewing = client.renew(lease.command.id, lease.leaseToken, { importJobId });
+                const command = await renewing;
+                lease.command = command;
+                associatedJob = importJobId || associatedJob;
+                renewedAt = Date.now();
+                await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
+            }
+        } catch {
+            lost = true;
+            throw Object.assign(new Error('REMOTE_LEASE_LOST'), { code: 'LEASE_LOST' });
+        } finally { renewing = null; }
+    };
+    const timer = setInterval(() => {
+        assertLease(associatedJob, true).then(() => client.heartbeat()).catch(() => { lost = true; });
+    }, 60000);
+    try {
+        await assertLease(undefined, true);
+        if (lease.command.status === 'CLAIMED') {
+            lease.command = await client.start(lease.command.id, lease.leaseToken);
+            await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
+        }
+        const result = await runRemoteEtsyOrders({ command: lease.command, client, scope, assertLease,
+            load: async () => {
+                const { etsyRemoteOrderRun: run } = await chrome.storage.local.get('etsyRemoteOrderRun');
+                return run?.acknowledged && run.id !== lease.command.id ? null : run;
+            },
+            save: async run => chrome.storage.local.set({ etsyRemoteOrderRun: run }),
+            downloadFile: downloadManualFile,
+            collect: async limit => {
+                let orders = [];
+                await handleGetEtsyOrdersAndPush({ taskId: lease.command.id, maxTotalOrders: limit, maxAutoDomDetailOrders: limit, pushOrders: async data => { orders = data; return {}; } });
+                return orders;
+            },
+        });
+        await assertLease(result.importJobId, true);
+        lease.completion = result;
+        await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
+        return await acknowledgeCompletion();
+    } catch (error) {
+        if (!lease.completion && !lost && error.code !== 'IMPORT_PENDING' && error.name !== 'TypeError' && !(error.status >= 500)) {
+            const { etsyRemoteOrderRun: run } = await chrome.storage.local.get('etsyRemoteOrderRun');
+            await assertLease(run?.jobId, true);
+            lease.completion = { success: false, ...(run?.jobId ? { importJobId: run.jobId } : {}), importedCount: run?.result?.importedCount || 0, failedCount: run?.result?.failedCount || 0, errorMessage: 'ETSY_REMOTE_IMPORT_FAILED' };
+            await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
+            return await acknowledgeCompletion();
+        }
+        // Keep exact CSV/job and session ownership for an alarm-driven resume.
+        return { ok: false, reason: error.code === 'LEASE_LOST' ? 'REMOTE_LEASE_LOST' : 'REMOTE_IMPORT_PENDING' };
+    } finally { clearInterval(timer); }
 }
 
 async function startLngWebBeAgent() {
