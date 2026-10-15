@@ -2584,7 +2584,15 @@ function mapOrders({ raw, shopName, orderStates }) {
             orderId: String(order.order_id || orderId),
             orderUrl: order.order_url || "",
 
-            statusName: stateNameById[String(order.order_state_id)] || "",
+            statusName: fulfillment.status?.cancellation_status?.is_fully_cancelled === true ? 'CANCELLED'
+                : fulfillment.status?.cancellation_status?.is_partially_cancelled === true ? 'PARTIALLY_CANCELLED'
+                : fulfillment.status?.cancellation_status?.has_pending_cancellation === true ? 'CANCELLATION_PENDING'
+                : payment.is_fully_refunded === true ? 'REFUNDED'
+                : payment.is_partially_refunded === true ? 'PARTIALLY_REFUNDED'
+                : stateNameById[String(order.order_state_id)] || "",
+            paymentStatus: payment.is_fully_refunded === true ? 'REFUNDED'
+                : payment.is_fully_paid === true ? 'PAID'
+                : payment.is_fully_paid === false ? 'PENDING' : '',
             orderStateId: order.order_state_id || null,
 
             buyerName,
@@ -2871,6 +2879,7 @@ function toBackendOrder(o, ctx) {
         shippedAt: isoToDate(o.shippedAt),
 
         status: o.statusName || "",
+        paymentStatus: o.paymentStatus || '',
         isFullyPaid: o.isFullyPaid,
         shipByDate: o.shipByDate || null,
         shippingService: o.shippingService || "",

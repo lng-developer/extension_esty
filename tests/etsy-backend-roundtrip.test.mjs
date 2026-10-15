@@ -54,3 +54,12 @@ test('listing thumbnail survives CSV without becoming customer artwork', { skip:
   assert.equal(order.items[0].externalData.etsy.listingImageThumbnailUrl, 'https://i.etsystatic.com/123/r/il_75x75.jpg');
   assert.equal(order.items[0].customizationRawSummary.expectedFileCount, 0);
 });
+test('cancelled/refunded state survives the CSV backend boundary', () => {
+  const { parseUploadedOrderReport } = require(`${backend}manualExcel.parser.js`);
+  const { mapEtsySoldOrderItemRowsToExternalOrderDtos } = require(`${backend}etsySoldOrderItems.mapper.js`);
+  const csv = toEtsySoldOrderItemsCsv([{ orderId: '4193749613', status: 'CANCELLED', paymentStatus: 'REFUNDED', isFullyPaid: true, items: [{ transactionId: '2', quantity: 1 }] }]);
+  const [dto] = mapEtsySoldOrderItemRowsToExternalOrderDtos(parseUploadedOrderReport(Buffer.from(csv), { originalFilename: 'etsy.csv' }).rows);
+  assert.equal(dto.externalStatus, 'CANCELLED');
+  assert.equal(dto.paymentStatus, 'REFUNDED');
+  assert.equal(dto.items[0].externalStatus, 'CANCELLED');
+});

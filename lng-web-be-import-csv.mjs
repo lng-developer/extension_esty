@@ -61,7 +61,7 @@ export function toEtsySoldOrderItemsCsv(orders = []) {
     item.baseImage?.imageUrl || '',
     item.baseImage?.thumbnailUrl || item.baseImage?.imageUrl || '',
     order.status || '',
-    order.isFullyPaid === true ? 'PAID' : order.isFullyPaid === false ? 'PENDING' : '',
+    order.paymentStatus || (order.isFullyPaid === true ? 'PAID' : order.isFullyPaid === false ? 'PENDING' : ''),
     order.shipByDate || '',
     order.shippingService || '',
     index === 0 ? order.totals?.discountAmount : '',

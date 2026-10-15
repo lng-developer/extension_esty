@@ -37,7 +37,36 @@ test('ship-by normalization ignores zero/invalid values and accepts explicit ISO
   assert.equal(ctx.normalizeEtsyShipByDate('2026-10-20'), '2026-10-20T00:00:00.000Z');
 });
 
+test('explicit cancellation overrides Completed and full refund overrides paid', () => {
+  const ctx = collector();
+  for (const [flags, expected] of [
+    [{ is_fully_cancelled: true }, 'CANCELLED'],
+    [{ is_partially_cancelled: true }, 'PARTIALLY_CANCELLED'],
+    [{ has_pending_cancellation: true }, 'CANCELLATION_PENDING'],
+  ]) {
+    const [mapped] = ctx.mapOrders({ raw: { order_ids: ['1'], orders_by_id: { '1': {
+      order_id: '1', order_state_id: 2,
+      fulfillment: { status: { cancellation_status: flags } },
+      payment: { is_fully_paid: true, is_fully_refunded: true },
+    } } }, orderStates: [{ order_state_id: 2, name: 'Completed' }] });
+    const order = ctx.toBackendOrder(mapped, {});
+    assert.equal(order.status, expected);
+    assert.equal(order.paymentStatus, 'REFUNDED');
+    assert.match(toEtsySoldOrderItemsCsv([{ ...order, items: [{ transactionId: '2' }] }]), /REFUNDED/);
+  }
+});
+
 test('CSV does not repeat variations as a second personalization block', () => {
   const csv = toEtsySoldOrderItemsCsv([{ orderId: '1', items: [{ transactionId: '2', variations: { Size: 'L', Personalization: 'Alice' }, customizations: { textFields: [{ name: 'Size', value: 'L' }, { name: 'Personalization', value: 'Alice' }] } }] }]);
   assert.equal((csv.match(/Alice/g) || []).length, 1);
+});
+
+test('partial refund does not become full refund or full cancellation', () => {
+  const ctx = collector();
+  const [mapped] = ctx.mapOrders({ raw: { order_ids: ['1'], orders_by_id: { '1': {
+    order_id: '1', payment: { is_fully_paid: true, is_partially_refunded: true },
+  } } }, orderStates: [] });
+  const order = ctx.toBackendOrder(mapped, {});
+  assert.equal(order.status, 'PARTIALLY_REFUNDED');
+  assert.equal(order.paymentStatus, 'PAID');
 });
