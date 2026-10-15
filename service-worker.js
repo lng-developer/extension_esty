@@ -87,6 +87,7 @@ async function handleManualMessage(action, payload) {
         await chrome.storage.local.set({ etsyManualMode: true });
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
         await disconnectSocket();
+        await startLngWebBeAgent();
         return verified;
     }
     const { etsyManualRun: run } = await chrome.storage.local.get('etsyManualRun');
@@ -169,9 +170,11 @@ async function getLngWebBeAgentConfig() {
         clientId = crypto.randomUUID();
         await chrome.storage.local.set({ [LNG_WEB_BE_CLIENT_ID_KEY]: clientId });
     }
+    const manual = await isEtsyManualMode();
+    const { etsyManualConfig } = manual ? await chrome.storage.session.get('etsyManualConfig') : {};
     return {
-        apiBaseUrl: saved.lngWebBeApiBaseUrl || "https://api.lngmerch.co",
-        extensionToken: saved.extensionToken || "",
+        apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://api.lngmerch.co",
+        extensionToken: manual ? etsyManualConfig?.extensionToken || "" : saved.extensionToken || "",
         clientId,
         label: String(saved.socketLabel || "LNG Etsy Worker").trim(),
         version: chrome.runtime.getManifest().version
@@ -179,13 +182,17 @@ async function getLngWebBeAgentConfig() {
 }
 
 async function runLngWebBeAgentOnce() {
-    if (await isEtsyManualMode()) return { ok: true, skipped: true, reason: 'MANUAL_MODE' };
     if (lngWebBeAgentRunning) return { ok: false, skipped: true, reason: "AGENT_RUNNING" };
     const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
     if (!await client.isConfigured()) return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
 
     lngWebBeAgentRunning = true;
     try {
+        // Manual mode reports presence only; never claim remote commands.
+        if (await isEtsyManualMode()) {
+            await client.heartbeat();
+            return { ok: true, idle: true };
+        }
         return await executeNextLngWebBeCommand({
             client,
             validateCommand: (command) => {
@@ -240,7 +247,6 @@ async function runLngWebBeAgentOnce() {
 }
 
 async function startLngWebBeAgent() {
-    if (await isEtsyManualMode()) return { ok: true, skipped: true, reason: 'MANUAL_MODE' };
     const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
     if (!await client.isConfigured()) {
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
@@ -2862,11 +2868,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (await isEtsyManualMode()) return;
     if (alarm?.name === LNG_WEB_BE_COMMAND_ALARM) {
-        startLngWebBeAgent();
+        await startLngWebBeAgent();
         return;
     }
+    if (await isEtsyManualMode()) return;
     if (alarm?.name === ETSY_MESSAGE_MONITOR_ALARM) {
         if (ETSY_MESSAGE_MONITOR_AUTO_ENABLED !== true) {
             chrome.alarms.clear(ETSY_MESSAGE_MONITOR_ALARM).catch(() => {});
