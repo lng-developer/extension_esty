@@ -2603,6 +2603,7 @@ function mapOrders({ raw, shopName, orderStates }) {
             phoneNumber: toAddress.phone || "",
 
             shippingService: fulfillment.shipping_method || "",
+            shipByDate: normalizeEtsyShipByDate(fulfillment.ship_by_date ?? fulfillment.expected_ship_date),
             isUSPSVerified: Boolean(toAddress.is_usps_verified),
 
             orderDate: unixToIso(order.order_date),
@@ -2621,17 +2622,17 @@ function mapOrders({ raw, shopName, orderStates }) {
 
             sellerCode,
 
-            isFullyPaid: Boolean(payment.is_fully_paid),
+            isFullyPaid: typeof payment.is_fully_paid === 'boolean' ? payment.is_fully_paid : null,
 
             financial: {
-                total: moneyValue(costBreakdown.total_cost),
+                total: costBreakdown.total_cost ? moneyValue(costBreakdown.total_cost) : null,
                 itemsCost: moneyValue(costBreakdown.items_cost),
                 adjustedItemsCost: moneyFormatted(costBreakdown.items_cost),
 
                 adjustedShippingCost: moneyFormatted(costBreakdown.adjusted_shipping_cost),
                 adjustedTotalCost: moneyFormatted(costBreakdown.adjusted_total_cost),
 
-                discount: moneyValue(costBreakdown.discount),
+                discount: costBreakdown.discount ? moneyValue(costBreakdown.discount) : null,
                 adjustedDiscount: moneyFormatted(costBreakdown.discount),
 
                 discounted: moneyValue(costBreakdown.discounted_items_cost),
@@ -2639,7 +2640,7 @@ function mapOrders({ raw, shopName, orderStates }) {
 
                 tax: moneyValue(costBreakdown.tax_cost),
                 shippingCost: moneyValue(costBreakdown.shipping_cost),
-                shippingDiscount: moneyValue(costBreakdown.shipping_discount),
+                shippingDiscount: costBreakdown.shipping_discount ? moneyValue(costBreakdown.shipping_discount) : null,
                 refund: moneyValue(costBreakdown.refund)
             },
 
@@ -2869,7 +2870,10 @@ function toBackendOrder(o, ctx) {
         paidAt: isoToDate(o.purchaseDate),
         shippedAt: isoToDate(o.shippedAt),
 
-        status: o.statusName || "New",
+        status: o.statusName || "",
+        isFullyPaid: o.isFullyPaid,
+        shipByDate: o.shipByDate || null,
+        shippingService: o.shippingService || "",
 
         orderType: null,
         listingsType: null,
@@ -2911,7 +2915,7 @@ function toBackendOrder(o, ctx) {
             orderValue: round2(itemsCost),
             shipping: round2(orderShipping),
             salesTax: round2(orderTax),
-            orderTotal: round2(orderTotal),
+            orderTotal: o.financial?.total == null ? null : round2(orderTotal),
             cardProcessingFees: 0,
             orderNet: 0,
 
@@ -2926,8 +2930,8 @@ function toBackendOrder(o, ctx) {
 
             orderShipping: round2(orderShipping),
             orderSalesTax: round2(orderTax),
-            discountAmount: round2(discount),
-            shippingDiscount: round2(shippingDiscount),
+            discountAmount: o.financial?.discount == null ? null : round2(discount),
+            shippingDiscount: o.financial?.shippingDiscount == null ? null : round2(shippingDiscount),
             inPersonDiscount: 0,
             vatPaidByBuyer: 0
         },
@@ -3037,6 +3041,14 @@ function unixToIso(value) {
     }
 
     return new Date(timestamp * 1000).toISOString();
+}
+
+function normalizeEtsyShipByDate(value) {
+    if (value === null || value === undefined || value === '' || Number(value) === 0) return null;
+    const date = typeof value === 'number' || /^\d+$/.test(String(value))
+        ? new Date(Number(value) * 1000)
+        : /^\d{4}-\d{2}-\d{2}(T.*)?$/.test(String(value)) ? new Date(value) : null;
+    return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function normalizeCarrierInput(value) {

@@ -15,6 +15,8 @@ const ORDER_HEADERS = [
   "Ship Name", "Ship Address1", "Ship Address2", "Ship City", "Ship State", "Ship Zipcode", "Ship Country",
   "LNG Expected Files", "LNG Needs Review",
   "LNG Listing Image", "LNG Listing Thumbnail",
+  "LNG Etsy Status", "LNG Payment Status", "LNG Ship By", "LNG Shipping Service",
+  "LNG Order Discount", "LNG Shipping Discount", "LNG Order Total",
 ];
 
 export function toEtsySoldOrderItemsCsv(orders = []) {
@@ -26,6 +28,8 @@ export function toEtsySoldOrderItemsCsv(orders = []) {
       ? Object.entries(item.variations || {}).map(([key, value]) => `${key}: ${value}`).join(', ')
       : item.variations) || item.variantRaw || item.variationsRaw;
     const personalization = item.personalization ?? (item.customizations?.textFields || [])
+      .filter(({ name, value }) => !item.variations || typeof item.variations !== 'object'
+        || String(item.variations[name] ?? '') !== String(value ?? ''))
       .map(({ name, value }) => `${name || 'Personalization'}: ${value ?? ''}`).join('\n');
     const quantity = item.quantity ?? 1;
     const price = item.unitPrice ?? item.price ?? (item.itemTotal == null ? undefined : item.itemTotal / quantity);
@@ -56,6 +60,13 @@ export function toEtsySoldOrderItemsCsv(orders = []) {
     Boolean(item.customFilesNeedsReview),
     item.baseImage?.imageUrl || '',
     item.baseImage?.thumbnailUrl || item.baseImage?.imageUrl || '',
+    order.status || '',
+    order.isFullyPaid === true ? 'PAID' : order.isFullyPaid === false ? 'PENDING' : '',
+    order.shipByDate || '',
+    order.shippingService || '',
+    index === 0 ? order.totals?.discountAmount : '',
+    index === 0 ? order.totals?.shippingDiscount : '',
+    index === 0 ? order.totals?.orderTotal : '',
   ]; }));
   return csv(ORDER_HEADERS, rows);
 }

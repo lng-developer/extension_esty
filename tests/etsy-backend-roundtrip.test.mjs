@@ -6,6 +6,25 @@ import { toEtsySoldOrderItemsCsv } from '../lng-web-be-import-csv.mjs';
 const require = createRequire(import.meta.url);
 const backend = '../../lng-web-be/src/modules/integration/externalOrderImport/sources/manualExcel/';
 
+test('lifecycle, country and order-level money survive CSV without duplicated discounts', () => {
+  const { parseUploadedOrderReport } = require(`${backend}manualExcel.parser.js`);
+  const { mapEtsySoldOrderItemRowsToExternalOrderDtos } = require(`${backend}etsySoldOrderItems.mapper.js`);
+  const csv = toEtsySoldOrderItemsCsv([{ orderId: '1', status: 'Completed', isFullyPaid: true,
+    shipByDate: '2026-10-20T00:00:00.000Z', shippingService: 'Express', shipping: { country: 'Switzerland' },
+    totals: { discountAmount: 5, shippingDiscount: 2, orderTotal: 18 },
+    items: [{ transactionId: '2', unitPrice: 20 }, { transactionId: '3', unitPrice: 0 }],
+  }]);
+  const rows = parseUploadedOrderReport(Buffer.from(csv), { originalFilename: 'etsy.csv' }).rows;
+  const [dto] = mapEtsySoldOrderItemRowsToExternalOrderDtos(rows);
+  assert.equal(dto.externalStatus, 'Completed');
+  assert.equal(dto.paymentStatus, 'PAID');
+  assert.equal(dto.shippingAddress.countryCode, 'CH');
+  assert.equal(dto.shipByDate, '2026-10-20T00:00:00.000Z');
+  assert.equal(dto.shippingService.name, 'Express');
+  assert.equal(dto.externalData.etsy.financial.orderDiscountAmount, 500);
+  assert.equal(rows[1]['LNG Order Discount'], '');
+});
+
 test('collector CSV round-trips through paired BE parser and mapper', { skip: !existsSync(new URL(`${backend}manualExcel.parser.js`, import.meta.url)) }, () => {
   const { parseUploadedOrderReport } = require(`${backend}manualExcel.parser.js`);
   const { mapEtsySoldOrderItemRowsToExternalOrderDtos } = require(`${backend}etsySoldOrderItems.mapper.js`);
