@@ -347,7 +347,7 @@ chrome.storage.local.get(
   (cfg) => {
     inputShopId.value = cfg.mongoShopId || "";
     inputBackend.value = cfg.backendUrl || DEFAULT_BACKEND_URL;
-    if (inputLngWebBeApiBaseUrl) inputLngWebBeApiBaseUrl.value = cfg.lngWebBeApiBaseUrl || "https://api.lngmerch.co";
+    if (inputLngWebBeApiBaseUrl) inputLngWebBeApiBaseUrl.value = cfg.lngWebBeApiBaseUrl || "https://dev-api.lngmerch.co";
     if (inputExtensionToken) inputExtensionToken.value = cfg.extensionToken || "";
     if (lngWebBeAgentStatus) {
       const statusText = {
@@ -393,7 +393,7 @@ btnSaveCfg.addEventListener("click", () => {
     inputEtsyAdsBackendUrl?.value?.trim() || DEFAULT_ETSY_ADS_BACKEND_URL;
   const mongoShopId = inputShopId.value.trim();
   const backendUrl = inputBackend.value.trim() || DEFAULT_BACKEND_URL;
-  const lngWebBeApiBaseUrl = inputLngWebBeApiBaseUrl?.value?.trim() || "https://api.lngmerch.co";
+  const lngWebBeApiBaseUrl = inputLngWebBeApiBaseUrl?.value?.trim() || "https://dev-api.lngmerch.co";
   const extensionToken = inputExtensionToken?.value?.trim() || "";
 
   if (mongoShopId && !/^[a-f0-9]{24}$/i.test(mongoShopId)) {

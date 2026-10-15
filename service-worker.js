@@ -77,7 +77,7 @@ async function handleManualMessage(action, payload) {
     if (action === 'ETSY_MANUAL_CONFIG') {
         if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
         const apiBaseUrl = new URL(payload.apiBaseUrl).origin;
-        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://api.lngmerch.co'].includes(apiBaseUrl) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
+        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://dev-api.lngmerch.co'].includes(apiBaseUrl) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
         const identity = await createLngWebBeCommandClient({ getConfig: async () => ({ apiBaseUrl, extensionToken: payload.extensionToken }) }).getIdentity();
         if (identity?.tokenType !== 'EXTENSION' || !/^[a-f\d]{24}$/i.test(identity.shop?.id)) throw new Error('Backend chưa hỗ trợ xác thực shop từ token. Cần cập nhật BE.');
         if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
@@ -167,7 +167,7 @@ async function getLngWebBeAgentConfig() {
     const { etsyManualConfig } = manual ? await chrome.storage.session.get('etsyManualConfig') : {};
     return {
         ...(manual ? { provider: 'ETSY', protocolVersion: 1 } : {}),
-        apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://api.lngmerch.co",
+        apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://dev-api.lngmerch.co",
         extensionToken: manual ? etsyManualConfig?.extensionToken || "" : saved.extensionToken || "",
         clientId,
         label: String(saved.socketLabel || "LNG Etsy Worker").trim(),

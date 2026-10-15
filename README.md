@@ -12,9 +12,11 @@ Load this project folder in `chrome://extensions` with Developer Mode enabled.
 
 In the popup, configure:
 
-- **LNG Web BE API URL** — for example `https://api.lngmerch.co` or the local backend origin.
+- **LNG Web BE API URL** — `https://dev-api.lngmerch.co` for the current dev backend, or the local backend origin. `https://api.lngmerch.co` is the old production backend, not the current command API target.
 - **Extension Token** — an `lng_ext_…` token issued for exactly one shop, with `ORDERS:WRITE` and `FINANCE:WRITE` scope.
 
 The worker stores the token only in Chrome local extension storage. On save, startup, and once a minute it heartbeats and claims at most one command. Supported commands are `IMPORT_NEW_ORDERS` and one-day `IMPORT_ADS_SPEND`; it uploads a CSV with `Authorization: Bearer <token>` and `Idempotency-Key: <command id>`, then completes the lease. The backend derives the shop solely from the token, never from extension input.
+
+After updating, reload the extension in `chrome://extensions`, reopen the order screen, select **Dev · dev-api.lngmerch.co**, and authenticate with an extension token issued by that backend. Existing saved URLs, tokens, and unfinished checkpoints are not automatically migrated. Manual-mode tokens remain in session storage. Reconcile any unfinished run on its original backend before changing its target.
 
 Do not use the legacy Orders/Ads Socket setup when an Extension Token is configured. Socket.IO remains only for Etsy tracking. Listings, messages, and other legacy automation are outside the command-agent scope.

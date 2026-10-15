@@ -14,6 +14,7 @@
     "https://www.etsy.com/*",
     "https://*.etsystatic.com/*",
     "https://api.lngmerch.co/*",
+    "https://dev-api.lngmerch.co/*",
     "http://localhost:5000/*",
     "http://localhost:3000/*",
     "http://192.168.1.3:3000/*"
@@ -27,6 +28,6 @@
     "default_title": "LNG · Đơn hàng Etsy"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.etsy.com https://*.etsystatic.com https://api.lngmerch.co http://localhost:3000 http://localhost:5000 http://192.168.1.3:3000 wss://api.lngmerch.co ws://localhost:5000"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.etsy.com https://*.etsystatic.com https://api.lngmerch.co https://dev-api.lngmerch.co http://localhost:3000 http://localhost:5000 http://192.168.1.3:3000 wss://api.lngmerch.co ws://localhost:5000"
   }
 }

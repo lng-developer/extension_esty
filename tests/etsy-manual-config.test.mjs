@@ -16,6 +16,20 @@ function setup({ identity, run, remoteRun, failure } = {}) {
 }
 const payload = { apiBaseUrl: 'http://192.168.1.3:3000', extensionToken: 'lng_ext_test' };
 const shop = { id: '507f1f77bcf86cd799439011', name: 'Etsy test', code: 'ET01' };
+
+test('connects to the current dev API and retains its verified scope', async () => {
+  const app = setup({ identity: { tokenType: 'EXTENSION', shop } });
+  const result = await app.save({ ...payload, apiBaseUrl: 'https://dev-api.lngmerch.co' });
+  assert.equal(result.apiBaseUrl, 'https://dev-api.lngmerch.co');
+  assert.equal(app.session.etsyManualConfig.shopId, shop.id);
+  assert.equal(app.presenceStarted, true);
+});
+
+test('rejects the old production domain for new manual connections', async () => {
+  const app = setup({ identity: { tokenType: 'EXTENSION', shop } });
+  await assert.rejects(app.save({ ...payload, apiBaseUrl: 'https://api.lngmerch.co' }), /Cấu hình không hợp lệ/);
+  assert.equal(app.session.etsyManualConfig, undefined);
+});
 test('resolves shop from verified identity and ignores a client supplied shop', async () => {
   const app = setup({ identity: { tokenType: 'EXTENSION', shop } });
   const result = await app.save({ ...payload, shopId: '507f1f77bcf86cd799439099' });
