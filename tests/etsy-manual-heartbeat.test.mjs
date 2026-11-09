@@ -77,11 +77,11 @@ test('automatic mode retains heartbeat and command claim', async () => {
   assert.deepEqual(app.requests.map(req => new URL(req.url).pathname.split('/').at(-1)), ['heartbeat', 'claim']);
 });
 
-test('unconfigured agent sends heartbeat to the current dev API', async () => {
+test('unconfigured agent sends heartbeat to the current production API', async () => {
   const app = setup({ manual: false });
   delete app.local.lngWebBeApiBaseUrl;
   await app.ctx.startLngWebBeAgent();
-  assert.equal(app.requests[0].url, 'https://dev-api.lngmerch.co/api/integration/extension-commands/agent/heartbeat');
+  assert.equal(app.requests[0].url, 'https://ecomatrix.lngmerch.co/api/integration/extension-commands/agent/heartbeat');
 });
 test('acknowledged Etsy protocol permits claim but unfinished manual preview blocks it', async () => {
   const app = setup({ acknowledged: true });

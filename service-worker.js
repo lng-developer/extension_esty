@@ -25,8 +25,8 @@ const CONFIG = {
     ETSY_SOLD_URL: "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav",
     ETSY_ADS_URL: "https://www.etsy.com/your/shops/me/advertising",
     ETSY_MESSAGES_URL: "https://www.etsy.com/messages",
-    DEFAULT_BACKEND_URL: "https://api.lngmerch.co/api/etsy/",
-    DEFAULT_ETSY_ADS_BACKEND_URL: "https://api.lngmerch.co/api/etsy-ads"
+    DEFAULT_BACKEND_URL: "https://ecomatrix.lngmerch.co/api/etsy/",
+    DEFAULT_ETSY_ADS_BACKEND_URL: "https://ecomatrix.lngmerch.co/api/etsy-ads"
 };
 
 console.log("[LNG][sw] service-worker.js loaded", CONFIG);
@@ -77,7 +77,7 @@ async function handleManualMessage(action, payload) {
     if (action === 'ETSY_MANUAL_CONFIG') {
         if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
         const apiBaseUrl = new URL(payload.apiBaseUrl).origin;
-        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://dev-api.lngmerch.co'].includes(apiBaseUrl) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
+        if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://dev-api.lngmerch.co', 'https://ecomatrix.lngmerch.co'].includes(apiBaseUrl) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
         const identity = await createLngWebBeCommandClient({ getConfig: async () => ({ apiBaseUrl, extensionToken: payload.extensionToken }) }).getIdentity();
         if (identity?.tokenType !== 'EXTENSION' || !/^[a-f\d]{24}$/i.test(identity.shop?.id)) throw new Error('Backend chưa hỗ trợ xác thực shop từ token. Cần cập nhật BE.');
         if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
@@ -167,7 +167,7 @@ async function getLngWebBeAgentConfig() {
     const { etsyManualConfig } = manual ? await chrome.storage.session.get('etsyManualConfig') : {};
     return {
         ...(manual ? { provider: 'ETSY', protocolVersion: 1 } : {}),
-        apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://dev-api.lngmerch.co",
+        apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://ecomatrix.lngmerch.co",
         extensionToken: manual ? etsyManualConfig?.extensionToken || "" : saved.extensionToken || "",
         clientId,
         label: String(saved.socketLabel || "LNG Etsy Worker").trim(),

@@ -25,10 +25,16 @@ test('connects to the current dev API and retains its verified scope', async () 
   assert.equal(app.presenceStarted, true);
 });
 
-test('rejects the old production domain for new manual connections', async () => {
+test('rejects the legacy production domain for new manual connections', async () => {
   const app = setup({ identity: { tokenType: 'EXTENSION', shop } });
   await assert.rejects(app.save({ ...payload, apiBaseUrl: 'https://api.lngmerch.co' }), /Cấu hình không hợp lệ/);
   assert.equal(app.session.etsyManualConfig, undefined);
+});
+test('accepts the current production domain for new manual connections', async () => {
+  const app = setup({ identity: { tokenType: 'EXTENSION', shop } });
+  const result = await app.save({ ...payload, apiBaseUrl: 'https://ecomatrix.lngmerch.co' });
+  assert.equal(result.apiBaseUrl, 'https://ecomatrix.lngmerch.co');
+  assert.equal(app.session.etsyManualConfig.shopId, shop.id);
 });
 test('resolves shop from verified identity and ignores a client supplied shop', async () => {
   const app = setup({ identity: { tokenType: 'EXTENSION', shop } });
