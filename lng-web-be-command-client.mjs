@@ -60,7 +60,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
       method: "POST",
       headers: {
         Authorization: `Bearer ${extensionToken}`,
-        "Idempotency-Key": String(idempotencyKey),
+        ...(idempotencyKey ? { "Idempotency-Key": String(idempotencyKey) } : {}),
       },
       body: form,
     });

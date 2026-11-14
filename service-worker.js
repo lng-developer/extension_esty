@@ -50,7 +50,16 @@ let lngWebBeAgentRunning = false;
 let etsyManualRunning = false;
 async function isEtsyManualMode() { return Boolean((await chrome.storage.local.get('etsyManualMode')).etsyManualMode); }
 async function manualConfig() {
-    const { etsyManualConfig: config } = await chrome.storage.session.get('etsyManualConfig');
+    let { etsyManualConfig: config } = await chrome.storage.session.get('etsyManualConfig');
+    if (!config?.extensionToken && chrome.storage?.local?.get) {
+        const local = await chrome.storage.local.get('etsyManualConfig');
+        if (local?.etsyManualConfig?.extensionToken) {
+            config = local.etsyManualConfig;
+            if (chrome.storage?.session?.set) {
+                await chrome.storage.session.set({ etsyManualConfig: config });
+            }
+        }
+    }
     if (!config?.extensionToken) throw new Error('Nhập lại Extension Token cho phiên Chrome này');
     return config;
 }
@@ -86,7 +95,7 @@ async function handleManualMessage(action, payload) {
         if (previousRun && previousRun.status !== 'COMPLETED' && previousRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Lượt kéo thuộc backend/shop khác. Dùng token cũ hoặc xóa preview trước.');
         const verified = { apiBaseUrl, shopId: identity.shop.id, shopName: identity.shop.name };
         await chrome.storage.session.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken } });
-        await chrome.storage.local.set({ etsyManualMode: true });
+        await chrome.storage.local.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken }, etsyManualMode: true });
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
         await disconnectSocket();
         await startLngWebBeAgent();
@@ -121,6 +130,23 @@ async function handleManualMessage(action, payload) {
             .catch(async (error) => { run.status = 'PAUSED'; run.error = error.code || 'IMPORT_INTERRUPTED'; await saveManualRun(run); })
             .finally(() => { etsyManualRunning = false; });
         return { started: true };
+    }
+    if (action === 'ETSY_MANUAL_IMPORT_STATEMENT') {
+        const client = createLngWebBeCommandClient({ getConfig: async () => config });
+        const filename = payload?.filename || `etsy-statement-${Date.now()}.csv`;
+        const upload = await client.uploadCsv(
+            "/api/finance/imports/transactions",
+            filename,
+            payload.csvText,
+            null,
+            {
+                salesChannelCode: "ETSY",
+                marketplaceCode: "ETSY_US",
+                sourceRef: filename,
+                dryRun: false
+            }
+        );
+        return upload;
     }
     throw new Error('Unknown manual action');
 }
@@ -164,7 +190,9 @@ async function getLngWebBeAgentConfig() {
         await chrome.storage.local.set({ [LNG_WEB_BE_CLIENT_ID_KEY]: clientId });
     }
     const manual = await isEtsyManualMode();
-    const { etsyManualConfig } = manual ? await chrome.storage.session.get('etsyManualConfig') : {};
+    const sessionCfg = manual ? (await chrome.storage.session.get('etsyManualConfig'))?.etsyManualConfig : null;
+    const localCfg = manual && !sessionCfg?.extensionToken ? (await chrome.storage.local.get('etsyManualConfig'))?.etsyManualConfig : null;
+    const etsyManualConfig = sessionCfg?.extensionToken ? sessionCfg : localCfg;
     return {
         ...(manual ? { provider: 'ETSY', protocolVersion: 1 } : {}),
         apiBaseUrl: manual ? etsyManualConfig?.apiBaseUrl : saved.lngWebBeApiBaseUrl || "https://ecomatrix.lngmerch.co",

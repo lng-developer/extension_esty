@@ -7,12 +7,15 @@ async function send(action, payload = {}) {
   if (!response?.ok) throw new Error(response?.message || 'Không thể thực hiện. Hãy kiểm tra kết nối và thử lại.');
   return response.data;
 }
+let statementCsvContent = null;
+let statementFilename = null;
 function controls() {
   $('pull').disabled = Boolean(busy || !savedConfig || (currentRun && !['PREVIEW', 'COMPLETED'].includes(currentRun.status)));
   $('import').disabled = busy || !savedConfig || !currentRun?.orderCount || currentRun.status === 'COMPLETED';
   $('clear').disabled = busy || !currentRun;
   $('save').disabled = busy;
   $('refresh').disabled = busy;
+  if ($('importStatement')) $('importStatement').disabled = Boolean(busy || !savedConfig || !statementCsvContent);
 }
 function render(run) {
   currentRun = run;
@@ -68,8 +71,75 @@ $('import').onclick = () => act(async () => {
 });
 $('refresh').onclick = () => act(async () => render(await send('ETSY_MANUAL_STATUS')));
 $('clear').onclick = () => act(async () => { if (confirm('Xóa preview/checkpoint cục bộ? Dữ liệu backend không bị xóa. Bạn sẽ mất khả năng tiếp tục lượt này.')) render(await send('ETSY_MANUAL_CLEAR')); });
+if ($('statement')) {
+  $('statement').onchange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    statementFilename = file.name;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      statementCsvContent = event.target.result;
+      const lines = statementCsvContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      const rowCount = Math.max(0, lines.length - 1);
+      const isVnd = statementCsvContent.includes('₫') || statementCsvContent.includes('VND');
+      const orderMatches = statementCsvContent.match(/Order\s*#?\d{8,}/gi) || [];
+      const uniqueOrders = new Set(orderMatches.map((m) => m.replace(/[^0-9]/g, '')));
+
+      if ($('stmtStats')) $('stmtStats').style.display = 'grid';
+      if ($('stmtTotalRows')) $('stmtTotalRows').textContent = String(rowCount);
+      if ($('stmtDetectedCurrency')) $('stmtDetectedCurrency').textContent = isVnd ? 'VND (Sẽ đổi USD)' : 'USD';
+      if ($('stmtOrderCount')) $('stmtOrderCount').textContent = String(uniqueOrders.size);
+      if ($('stmtStatus')) {
+        $('stmtStatus').style.display = 'block';
+        $('stmtStatus').dataset.error = 'false';
+        $('stmtStatus').textContent = `Đã đọc file "${file.name}". Bấm nút bên dưới để gửi lên backend và cập nhật phí thực tế.`;
+      }
+      controls();
+    };
+    reader.readAsText(file);
+  };
+}
+if ($('importStatement')) {
+  $('importStatement').onclick = () => act(async () => {
+    if (!statementCsvContent) throw new Error('Vui lòng chọn file sao kê CSV trước.');
+    if (!savedConfig) throw new Error('Vui lòng cấu hình kết nối và token trước.');
+    if ($('stmtStatus')) {
+      $('stmtStatus').style.display = 'block';
+      $('stmtStatus').dataset.error = 'false';
+      $('stmtStatus').textContent = 'Đang tải sao kê lên backend và phân bổ phí sàn / hoàn tiền...';
+    }
+    controls();
+
+    const result = await send('ETSY_MANUAL_IMPORT_STATEMENT', {
+      csvText: statementCsvContent,
+      filename: statementFilename || 'etsy_statement.csv',
+    });
+
+    if ($('stmtStatus')) {
+      $('stmtStatus').style.display = 'block';
+      $('stmtStatus').dataset.error = 'false';
+      $('stmtStatus').textContent = 'Đồng bộ sao kê thành công!';
+    }
+    if ($('stmtResult')) {
+      $('stmtResult').textContent = `Giao dịch đã xử lý: ${result?.validRows ?? result?.summary?.validRows ?? 'Thành công'} · Phí sàn & thuế đã cập nhật sang USD · Snapshot tài chính đã được tính lại.`;
+    }
+    $('statement').value = '';
+    statementCsvContent = null;
+    statementFilename = null;
+    controls();
+  });
+}
 act(async () => {
-  const { etsyManualConfig } = await chrome.storage.session.get('etsyManualConfig');
+  let { etsyManualConfig } = await chrome.storage.session.get('etsyManualConfig');
+  if (!etsyManualConfig?.extensionToken && chrome.storage?.local?.get) {
+    const local = await chrome.storage.local.get('etsyManualConfig').catch(() => null);
+    if (local?.etsyManualConfig?.extensionToken) {
+      etsyManualConfig = local.etsyManualConfig;
+      if (chrome.storage?.session?.set) {
+        await chrome.storage.session.set({ etsyManualConfig }).catch(() => null);
+      }
+    }
+  }
   if (etsyManualConfig?.extensionToken) {
     $('base').value = etsyManualConfig.apiBaseUrl;
     if (etsyManualConfig.shopName) {
