@@ -94,9 +94,20 @@ async function handleManualMessage(action, payload) {
         if (remoteRun && !remoteRun.acknowledged && remoteRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Remote checkpoint thuộc backend/shop khác; kiểm tra task cũ trước.');
         if (previousRun && previousRun.status !== 'COMPLETED' && previousRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Lượt kéo thuộc backend/shop khác. Dùng token cũ hoặc xóa preview trước.');
         const verified = { apiBaseUrl, shopId: identity.shop.id, shopName: identity.shop.name };
-        await chrome.storage.session.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken } });
-        await chrome.storage.local.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken }, etsyManualMode: true });
-        await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
+        if (chrome.storage?.session?.set) {
+            await chrome.storage.session.set({ etsyManualConfig: { ...verified, extensionToken: payload.extensionToken } });
+        }
+        await chrome.storage.local.set({
+            etsyManualConfig: { ...verified, extensionToken: payload.extensionToken },
+            etsyManualMode: true,
+            lngWebBeApiBaseUrl: apiBaseUrl,
+            extensionToken: payload.extensionToken,
+            shopId: identity.shop.id,
+            shopName: identity.shop.name
+        });
+        if (typeof chrome?.alarms?.create === 'function') {
+            await chrome.alarms.create(LNG_WEB_BE_COMMAND_ALARM, { periodInMinutes: 1 });
+        }
         await disconnectSocket();
         await startLngWebBeAgent();
         return verified;
@@ -212,6 +223,18 @@ async function runLngWebBeAgentOnce() {
     try {
         if (await isEtsyManualMode()) {
             const agent = await client.heartbeat();
+            const now = Date.now();
+            await chrome.storage.local.set({
+                extensionConnectionStatus: {
+                    state: "CONNECTED",
+                    lastHeartbeatAt: now,
+                    nextPollAt: now + 60_000,
+                    shopId: agent?.shopId,
+                    shopName: agent?.shopName
+                },
+                ...(agent?.shopId ? { shopId: agent.shopId } : {}),
+                ...(agent?.shopName ? { shopName: agent.shopName } : {})
+            });
             if (agent?.provider !== 'ETSY' || agent.protocolVersion !== 1) return { ok: true, idle: true };
             return await runRemoteEtsyWorker(client);
         }
@@ -348,23 +371,64 @@ async function runRemoteEtsyWorker(client) {
     } finally { clearInterval(timer); }
 }
 
+async function heartbeatOnly() {
+    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+    if (!await client.isConfigured()) {
+        const status = { state: "NOT_CONFIGURED", lastHeartbeatAt: null, nextPollAt: null };
+        await chrome.storage.local.set({ extensionConnectionStatus: status });
+        return { ok: false, error: "Extension Token hoặc Backend URL chưa được cấu hình" };
+    }
+    try {
+        const agent = await client.heartbeat();
+        const now = Date.now();
+        const status = {
+            state: "CONNECTED",
+            lastHeartbeatAt: now,
+            nextPollAt: now + 60_000,
+            shopId: agent?.shopId,
+            shopName: agent?.shopName
+        };
+        await chrome.storage.local.set({
+            extensionConnectionStatus: status,
+            [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONNECTED",
+            ...(agent?.shopId ? { shopId: agent.shopId } : {}),
+            ...(agent?.shopName ? { shopName: agent.shopName } : {})
+        });
+        return { ok: true, agent, message: "Heartbeat completed." };
+    } catch (error) {
+        const status = { state: "DISCONNECTED", lastHeartbeatAt: null, nextPollAt: Date.now() + 60_000 };
+        await chrome.storage.local.set({ extensionConnectionStatus: status });
+        throw error;
+    }
+}
+
 async function startLngWebBeAgent() {
     const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
     if (!await client.isConfigured()) {
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
-        await chrome.storage.local.set({ [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONFIGURATION_REQUIRED" });
+        await chrome.storage.local.set({
+            [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONFIGURATION_REQUIRED",
+            extensionConnectionStatus: { state: "NOT_CONFIGURED", lastHeartbeatAt: null, nextPollAt: null }
+        });
         return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
     }
     await chrome.alarms.create(LNG_WEB_BE_COMMAND_ALARM, { delayInMinutes: 1, periodInMinutes: 1 });
     try {
         const result = await runLngWebBeAgentOnce();
-        await chrome.storage.local.set({ [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONNECTED" });
+        const now = Date.now();
+        await chrome.storage.local.set({
+            [LNG_WEB_BE_AGENT_STATUS_KEY]: "CONNECTED",
+            extensionConnectionStatus: { state: "CONNECTED", lastHeartbeatAt: now, nextPollAt: now + 60_000 }
+        });
         return result;
     } catch (error) {
         if (error?.status === 401 || error?.status === 403) {
             await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
         }
-        await chrome.storage.local.set({ [LNG_WEB_BE_AGENT_STATUS_KEY]: error?.status === 401 || error?.status === 403 ? "TOKEN_REJECTED" : "RETRYING" });
+        await chrome.storage.local.set({
+            [LNG_WEB_BE_AGENT_STATUS_KEY]: error?.status === 401 || error?.status === 403 ? "TOKEN_REJECTED" : "RETRYING",
+            extensionConnectionStatus: { state: "DISCONNECTED", lastHeartbeatAt: null, nextPollAt: Date.now() + 60_000 }
+        });
         console.error("[LNG][sw][LNG_WEB_BE_AGENT]", { code: error?.code || null, status: error?.status || null, message: error?.message || String(error) });
         return { ok: false, error: error?.code || "LNG_WEB_BE_AGENT_FAILED" };
     }
@@ -2680,9 +2744,57 @@ async function handleImportEtsyAdsWithListingsSocketTask(task) {
     return finalResult;
 }
 
+async function runManualAdsSpend({ dateFrom, dateTo } = {}) {
+    const config = await getLngWebBeAgentConfig();
+    const client = createLngWebBeCommandClient({ getConfig: async () => config });
+    if (!await client.isConfigured()) throw new Error('Extension Token hoặc Backend URL chưa được cấu hình');
+
+    const fromDate = String(dateFrom || new Date().toISOString().slice(0, 10)).trim();
+    const toDate = String(dateTo || fromDate).trim();
+
+    const start = new Date(`${fromDate}T00:00:00Z`);
+    const end = new Date(`${toDate}T00:00:00Z`);
+    let totalImported = 0;
+
+    for (let cur = new Date(start); cur <= end; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        const dateStr = cur.toISOString().slice(0, 10);
+        const commandId = `etsy_ads_${dateStr}_${Date.now()}`;
+        const data = await handleEtsyAdsImportDay({
+            date: dateStr,
+            taskId: commandId,
+            taskType: "IMPORT_ADS_SPEND",
+            pushAds: async ({ rows }) => {
+                const upload = await client.uploadCsv(
+                    "/api/finance/imports/ads",
+                    `etsy-ads-${commandId}.csv`,
+                    toEtsyAdsCsv(rows),
+                    commandId,
+                    { salesChannelCode: "ETSY", marketplaceCode: "ETSY_US", sourceRef: `etsy-ads:${dateStr}`, dryRun: false }
+                );
+                return { importJobId: upload.importBatchId || upload.id || null };
+            }
+        });
+        totalImported += Number(data.rows || 0);
+    }
+    return { ok: true, importedCount: totalImported };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "HEARTBEAT_NOW" || message?.action === "HEARTBEAT_NOW") {
+        heartbeatOnly()
+            .then((res) => sendResponse(res))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (message?.type === "RUN_ADS_SPEND" || message?.action === "RUN_ADS_SPEND") {
+        runManualAdsSpend(message.payload || {})
+            .then((res) => sendResponse(res))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
     if (String(message?.action || '').startsWith('ETSY_MANUAL_')) {
-        if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('etsy-manual.html')) return false;
+        const allowedUrls = [chrome.runtime.getURL('etsy-manual.html'), chrome.runtime.getURL('options.html')];
+        if (sender.id !== chrome.runtime.id || (sender.url && !allowedUrls.includes(sender.url))) return false;
         handleManualMessage(message.action, message.payload || {}).then((data) => sendResponse({ ok: true, data })).catch((error) => sendResponse({ ok: false, message: error.message }));
         return true;
     }
@@ -2949,7 +3061,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
 
-    const relevantKeys = ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken", "socketLabel"];
+    const relevantKeys = ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken", "socketLabel", "etsyManualConfig"];
     const changedKeys = Object.keys(changes || {}).filter((key) => relevantKeys.includes(key));
 
     if (!changedKeys.length) return;
@@ -2964,7 +3076,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
             message: error?.message || String(error)
         });
     });
-    if (changedKeys.some((key) => ["lngWebBeApiBaseUrl", "extensionToken", "socketLabel"].includes(key))) {
+    if (changedKeys.some((key) => ["lngWebBeApiBaseUrl", "extensionToken", "socketLabel", "etsyManualConfig"].includes(key))) {
         startLngWebBeAgent();
     }
 });

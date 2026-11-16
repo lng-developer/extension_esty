@@ -1,0 +1,146 @@
+export const EXTENSION_LOG_STORAGE_KEY = 'extensionLogs';
+
+const SENSITIVE_KEY = /token|cookie|authorization|password|secret|header|body|email|address|phone|url/i;
+
+function redactText(value) {
+  return String(value ?? '')
+    .replace(/(Bearer\s+)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:token|key|secret|password)=[^&\s]+)/gi, '$1[REDACTED]')
+    .slice(0, 500);
+}
+
+function redactValue(value, depth = 0) {
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return redactText(value);
+  if (depth >= 2) return '[TRUNCATED]';
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => redactValue(item, depth + 1));
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !SENSITIVE_KEY.test(key))
+      .map(([key, item]) => [key, redactValue(item, depth + 1)]),
+  );
+}
+
+const ACTIVITY_TYPES = {
+  IMPORT_NEW_ORDERS: 'Orders',
+  IMPORT_ADS_SPEND: 'Ads Spend',
+  IMPORT_SETTLEMENTS: 'Settlements',
+  UPLOAD_TRACKING: 'Upload Tracking',
+  HEARTBEAT: 'Heartbeat',
+};
+
+function activityType(event) {
+  const taskType = event?.context?.taskType;
+  if (ACTIVITY_TYPES[taskType]) return taskType;
+  const text = `${event?.message || ''} ${event?.context?.function || ''}`.toUpperCase();
+  if (text.includes('TRACKING')) return 'UPLOAD_TRACKING';
+  if (text.includes('ADS')) return 'IMPORT_ADS_SPEND';
+  if (text.includes('SETTLEMENT') || text.includes('STATEMENT')) return 'IMPORT_SETTLEMENTS';
+  if (text.includes('HEARTBEAT')) return 'HEARTBEAT';
+  return 'IMPORT_NEW_ORDERS';
+}
+
+export function formatVietnamTime(timestamp) {
+  return `${new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(timestamp))} ICT`;
+}
+
+export function buildActivityRuns(events = [], { now = Date.now(), commands = [] } = {}) {
+  const runs = events.reduce((runs, event) => {
+    const type = activityType(event);
+    const context = event.context || {};
+    const strongKey = context.commandId || context.runId;
+    const key = strongKey || context.taskId;
+    const latest = [...runs].reverse().find((item) => item.type === type);
+    const startsRun = context.activityStatus === 'RUNNING' || /bắt đầu|started|pulling|importing/i.test(event.message || '');
+    const withinRunWindow = latest && new Date(event.timestamp).getTime() - new Date(latest.events.at(-1).timestamp).getTime() <= 60_000;
+    let run = key ? [...runs].reverse().find(item => item.type === type && item.key === key)
+      : latest && (!startsRun || latest.commandId) && (latest.status === 'RUNNING' || withinRunWindow) ? latest : null;
+
+    if (!run) {
+      if (!key && !startsRun && !context.taskType) return runs;
+      run = {
+        id: `${key || type}-${event.timestamp}-${runs.length}`,
+        key,
+        commandId: context.commandId,
+        type,
+        label: ACTIVITY_TYPES[type] || type,
+        status: 'RUNNING',
+        startedAt: event.timestamp,
+        dateFrom: context.dateFrom || null,
+        dateTo: context.dateTo || null,
+        dates: [],
+        error: null,
+        events: []
+      };
+      runs.push(run);
+    }
+    if (context.date && !run.dates.includes(context.date)) run.dates.push(context.date);
+    if (context.dateFrom) run.dateFrom = context.dateFrom;
+    if (context.dateTo) run.dateTo = context.dateTo;
+    run.events.push(event);
+
+    if (context.activityStatus === 'FAILED' || event.level === 'error') {
+      run.status = 'FAILED';
+      run.error = event?.context?.errorMessage || event.message;
+    } else if (context.activityStatus === 'SUCCEEDED' || /hoàn thành|completed|success/i.test(event.message || '')) {
+      run.status = 'SUCCEEDED';
+      run.error = null;
+    }
+    return runs;
+  }, []);
+
+  const byId = new Map(commands.map(command => [command.id, command]));
+  return runs.map(run => {
+    run.processedDays = run.dates?.length || 0;
+    run.totalDays = run.dateFrom && run.dateTo
+      ? Math.floor((Date.parse(`${run.dateTo}T00:00:00Z`) - Date.parse(`${run.dateFrom}T00:00:00Z`)) / 86400000) + 1
+      : null;
+    const command = byId.get(run.commandId);
+    if (command) {
+      run.status = ['SUCCEEDED', 'FAILED', 'QUEUED', 'CLAIMED', 'RUNNING'].includes(command.status) ? command.status : 'UNKNOWN';
+      run.error = command.errorMessage || null;
+    } else if (run.status === 'RUNNING' && now - Date.parse(run.events.at(-1).timestamp) > 7 * 60_000) {
+      run.status = 'UNKNOWN';
+    }
+    return run;
+  });
+}
+
+export function createExtensionLogger({ storage, maxEntries = 200 }) {
+  let writeQueue = Promise.resolve();
+
+  const append = (level, message, context) => {
+    const event = {
+      timestamp: new Date().toISOString(),
+      level,
+      message: redactText(message),
+      ...(context ? { context: redactValue(context) } : {}),
+    };
+    writeQueue = writeQueue.then(async () => {
+      const current = await storage.get(EXTENSION_LOG_STORAGE_KEY);
+      const events = [...(current[EXTENSION_LOG_STORAGE_KEY] ?? []), event].slice(-maxEntries);
+      await storage.set({ [EXTENSION_LOG_STORAGE_KEY]: events });
+    });
+    return writeQueue;
+  };
+
+  return {
+    logInfo: (message, context) => append('info', message, context),
+    logError: (_error, context, message) => append('error', message ?? 'Operation failed', context),
+    async getEvents() {
+      await writeQueue;
+      const current = await storage.get(EXTENSION_LOG_STORAGE_KEY);
+      return current[EXTENSION_LOG_STORAGE_KEY] ?? [];
+    },
+    async clear() {
+      await writeQueue;
+      await storage.set({ [EXTENSION_LOG_STORAGE_KEY]: [] });
+    },
+  };
+}

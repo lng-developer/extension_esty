@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LNG Etsy Extension</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+<main class="app-shell" aria-labelledby="pageTitle">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand-group">
+      <div class="brand-badge">LNG</div>
+      <div>
+        <p class="eyebrow">Enterprise Fulfillment</p>
+        <h1 id="pageTitle">Etsy Operations Hub</h1>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="version-badge">v1.1.0</span>
+      <span class="connection-state">
+        <span class="status-dot"></span>
+        Heartbeat & Commands active
+      </span>
+    </div>
+  </header>
+
+  <!-- BE Connection Status Banner -->
+  <section class="be-status" aria-label="Backend connection">
+    <div class="status-info">
+      <span class="status-icon">⚡</span>
+      <span id="beConnection">BE: Checking…</span>
+      <span class="separator">·</span>
+      <span id="bePoll">Next poll: -</span>
+    </div>
+    <button id="btnCheckNow" class="btn btn-secondary btn-sm" type="button">
+      <span class="btn-icon">↻</span> Check now
+    </button>
+  </section>
+
+  <!-- Navigation Tabs -->
+  <nav class="tabs" role="tablist" aria-label="Extension workflows">
+    <button class="tab is-active" type="button" role="tab" aria-selected="true" aria-controls="panel-orders" data-tab="orders">
+      <span class="tab-icon">📦</span> Orders
+    </button>
+    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-ads" data-tab="ads">
+      <span class="tab-icon">📊</span> Ads Spend
+    </button>
+    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-settlements" data-tab="settlements">
+      <span class="tab-icon">📑</span> Settlements
+    </button>
+    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-settings" data-tab="settings">
+      <span class="tab-icon">⚙️</span> Settings
+    </button>
+    <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-logs" data-tab="logs">
+      <span class="tab-icon">📜</span> Logs
+    </button>
+  </nav>
+
+  <!-- Panel: Orders -->
+  <section id="panel-orders" class="tab-panel is-active" role="tabpanel" data-panel="orders">
+    <div class="panel-header">
+      <p class="section-kicker">Order Import</p>
+      <h2>Kéo và import đơn hàng Etsy</h2>
+      <p>Lấy danh sách đơn hàng đã bán từ shop Etsy đang đăng nhập và import vào LNG backend kèm ảnh khách hàng.</p>
+    </div>
+
+    <div class="card">
+      <div class="field-grid">
+        <div class="form-group">
+          <label for="maxOrders">Số đơn tối đa (1 - 200)</label>
+          <input id="maxOrders" type="number" min="1" max="200" value="50" />
+        </div>
+        <div class="form-group" style="align-self: flex-end;">
+          <div class="btn-group">
+            <button id="btnPullOrders" class="btn btn-primary" type="button">
+              <span>⚡</span> Kéo đơn từ Etsy
+            </button>
+            <button id="btnConfirmImport" class="btn btn-primary" type="button" disabled>
+              Xác nhận import
+            </button>
+            <button id="btnRefreshStatus" class="btn btn-secondary btn-sm" type="button">
+              Xem tiến độ
+            </button>
+            <button id="btnClearPreview" class="btn btn-danger btn-sm" type="button" disabled>
+              Xóa preview
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-label">Số đơn hàng</span>
+          <span id="ordersCount" class="stat-value">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Số sản phẩm (Items)</span>
+          <span id="itemsCount" class="stat-value">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Ảnh đã upload</span>
+          <span id="uploadedCount" class="stat-value">0 / 0</span>
+        </div>
+      </div>
+
+      <div id="orderProgress" class="order-progress" role="status" aria-live="polite">
+        Chưa có dữ liệu. Bấm 'Kéo đơn từ Etsy' để bắt đầu.
+      </div>
+
+      <details class="preview-details">
+        <summary>Chi tiết kỹ thuật / Manifest</summary>
+        <pre id="previewDetails">Chưa có lượt kéo.</pre>
+      </details>
+    </div>
+
+    <div class="info-tip">
+      <span class="tip-icon">💡</span>
+      <p>Kiểm tra đúng shop Etsy trên tab trình duyệt trước khi kéo. Ảnh thiết kế của khách sẽ được tự động tải lên backend khi bấm 'Xác nhận import'.</p>
+    </div>
+  </section>
+
+  <!-- Panel: Ads Spend -->
+  <section id="panel-ads" class="tab-panel" role="tabpanel" data-panel="ads" hidden>
+    <div class="panel-header">
+      <p class="section-kicker">Marketing & Analytics</p>
+      <h2>Import chi phí Etsy Ads</h2>
+      <p>Đồng bộ dữ liệu chi phí và hiệu suất quảng cáo Etsy Ads trực tiếp vào LNG Finance.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Chọn khoảng thời gian</span>
+      </div>
+      <div class="field-grid">
+        <div class="form-group">
+          <label for="adsDateFrom">Từ ngày</label>
+          <input id="adsDateFrom" type="date" />
+        </div>
+        <div class="form-group">
+          <label for="adsDateTo">Đến ngày</label>
+          <input id="adsDateTo" type="date" />
+        </div>
+      </div>
+      <div class="card-actions">
+        <button id="btnExportAds" class="btn btn-primary" type="button">Import Ads spend</button>
+      </div>
+      <div id="adsProgress" class="order-progress" role="status" aria-live="polite">
+        Sẵn sàng import Ads spend.
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel: Settlements -->
+  <section id="panel-settlements" class="tab-panel" role="tabpanel" data-panel="settlements" hidden>
+    <div class="panel-header">
+      <p class="section-kicker">Finance & Reconciliation</p>
+      <h2>Import sao kê Etsy (Monthly Statement)</h2>
+      <p>Tải file CSV sao kê từ Etsy Payment Account và upload vào LNG. Hệ thống tự động nhận diện VND hoặc USD.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Chọn file CSV sao kê hàng tháng</span>
+      </div>
+      <div class="form-group">
+        <label for="statementFile">File CSV sao kê</label>
+        <input id="statementFile" type="file" accept=".csv" />
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-label">Tổng số dòng CSV</span>
+          <span id="stmtTotalRows" class="stat-value">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Đơn vị tiền tệ</span>
+          <span id="stmtDetectedCurrency" class="stat-value">—</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Số đơn liên quan</span>
+          <span id="stmtOrderCount" class="stat-value">0</span>
+        </div>
+      </div>
+
+      <div class="card-actions">
+        <button id="btnImportStatement" class="btn btn-primary" type="button" disabled>Gửi sao kê lên LNG</button>
+      </div>
+      <div id="stmtStatus" class="order-progress" role="status" aria-live="polite">
+        Vui lòng chọn file CSV để kiểm tra.
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel: Settings -->
+  <section id="panel-settings" class="tab-panel" role="tabpanel" data-panel="settings" hidden>
+    <div class="panel-header">
+      <p class="section-kicker">Connection & Auth</p>
+      <h2>Cấu hình kết nối Backend</h2>
+      <p>Cấu hình máy chủ LNG và Extension Token cho shop Etsy.</p>
+    </div>
+
+    <div class="card">
+      <div class="form-group">
+        <label for="apiBaseUrl">API Base URL</label>
+        <select id="apiBaseUrl">
+          <option value="https://ecomatrix.lngmerch.co">Production · https://ecomatrix.lngmerch.co</option>
+          <option value="https://dev-api.lngmerch.co">Dev API · https://dev-api.lngmerch.co</option>
+          <option value="http://localhost:3000">Localhost · http://localhost:3000</option>
+          <option value="http://192.168.1.3:3000">LAN · http://192.168.1.3:3000</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="shopInfo">Shop trong LNG (Tự động nhận diện từ token)</label>
+        <input id="shopInfo" type="text" readonly placeholder="Chưa xác thực token" />
+      </div>
+
+      <div class="form-group">
+        <label for="extensionToken">Extension Token</label>
+        <div class="input-with-button">
+          <input id="extensionToken" type="password" autocomplete="off" placeholder="lng_ext_..." />
+        </div>
+        <small style="display:block;margin-top:6px;color:var(--text-muted);font-size:12px;">
+          Token được lưu trong bộ nhớ Extension của Chrome để duy trì kết nối Heartbeat định kỳ 1 phút.
+        </small>
+      </div>
+
+      <div class="card-actions">
+        <button id="btnSaveSettings" class="btn btn-primary" type="button">Lưu cấu hình &amp; Kết nối</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel: Logs -->
+  <section id="panel-logs" class="tab-panel" role="tabpanel" data-panel="logs" hidden>
+    <div class="panel-header panel-header-row">
+      <div>
+        <p class="section-kicker">Diagnostics</p>
+        <h2>Nhật ký hoạt động</h2>
+        <p>Thời gian hiển thị theo múi giờ Việt Nam (ICT). Dữ liệu nhạy cảm được ẩn tự động.</p>
+      </div>
+      <div class="log-actions">
+        <button id="btnCopyLogs" class="btn btn-secondary btn-sm" type="button">Copy logs</button>
+        <button id="btnClearLogs" class="btn btn-secondary btn-sm" type="button">Clear logs</button>
+      </div>
+    </div>
+
+    <div id="logEntries" class="log-entries" aria-live="polite">Chưa có hoạt động nào.</div>
+  </section>
+
+  <!-- Activity Bar -->
+  <section class="activity" aria-label="Activity status">
+    <div class="activity-label">
+      <span class="activity-pulse"></span>
+      <span>Activity</span>
+    </div>
+    <output id="log" aria-live="polite">Ready.</output>
+  </section>
+</main>
+<script type="module" src="options.js"></script>
+</body>
+</html>
