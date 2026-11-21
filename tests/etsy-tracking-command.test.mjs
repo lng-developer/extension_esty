@@ -96,4 +96,5 @@ test("retries only verification after Etsy accepts a tracking upload", async () 
 test("command-agent waits 15 seconds between delayed Etsy verification checks", () => {
   const worker = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
   assert.match(worker, /delay:\s*\(\)\s*=>\s*sleep\(15_000\)/);
+  assert.match(worker, /const sleep = \(ms\) => new Promise\(resolve => setTimeout\(resolve, ms\)\);/);
 });

@@ -27,6 +27,7 @@ console.log("[LNG][sw] service-worker.js loaded", CONFIG);
 
 const trackingCommandLocks = new Set();
 const extensionLogger = createExtensionLogger({ storage: chrome.storage.local });
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const ETSY_AUTO_ALARM_PREFIX = "ETSY_AUTO_";
 const ETSY_AUTO_SYNC_ALARM = "ETSY_AUTO_CFG_SYNC";
 const ETSY_MESSAGE_MONITOR_ALARM = "ETSY_MESSAGE_SYNC_MONITOR";
