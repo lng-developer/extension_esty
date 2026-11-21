@@ -1,2 +1,7 @@
 node_modules/
 .idea/
+
+# Superseded extension popup sources kept only for local reference.
+popup.html
+popup.js
+orders-popup.html
