@@ -2,29 +2,28 @@
 
 ## Intent
 
-Make the common recovery action—re-importing one Etsy order—visible and usable
-from the Orders screen without opening the generic Trigger tools.
+Make re-importing one Etsy order visible and usable from the active Operations
+Hub Orders tab without first creating a batch preview.
 
 ## Scope
 
 - Add a compact `Re-import 1 order` card at the top of the Orders tab.
-- Keep the existing numeric validation and one-order import payload unchanged.
-- Leave tracking, ads, listing sync, and other manual tools in Trigger.
+- Validate a numeric Etsy Order ID, capture only that order with customer-file
+  scanning, then start the existing background import flow.
+- Leave batch import, tracking, ads, and settlements unchanged.
 
 ## Chosen approach
 
-Two options were considered: improve the Trigger modal, or promote the
-one-order action to Orders. The latter was chosen because it removes an
-unnecessary step for the operational task the user performs most often.
+The manifest loads `options.html`, not the legacy popup. The card therefore
+lives in Operations Hub and sends a dedicated manual action to the existing
+service worker, which reuses the current capture and import mechanisms.
 
 ## Interaction
 
 The card contains an Etsy order ID field, a short note that it scans customer
-files, and a clearly labelled re-import button. Invalid IDs continue to report
-through the existing activity log; a running import disables only its own
-button.
+files, and a clearly labelled re-import button. Invalid IDs are rejected in the
+UI and service worker; a running import disables only its own button.
 
 ## Non-goals
 
-No changes to the extension's backend contract, order capture logic, or batch
-import controls.
+No changes to the backend API or existing batch-import flow.

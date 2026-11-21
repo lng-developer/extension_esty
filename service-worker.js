@@ -133,6 +133,29 @@ async function handleManualMessage(action, payload) {
             return capture;
         } finally { etsyManualRunning = false; }
     }
+    if (action === 'ETSY_MANUAL_REIMPORT') {
+        if (run && run.status !== 'COMPLETED') throw new Error('Xóa hoặc hoàn tất checkpoint hiện tại trước');
+        const orderId = String(payload?.orderId || '').trim();
+        if (!/^\d+$/.test(orderId)) throw new Error('Etsy Order ID phải là chuỗi số hợp lệ');
+        etsyManualRunning = true;
+        try {
+            let capture;
+            await handleGetEtsyOrdersAndPush({ targetOrderId: orderId, maxTotalOrders: 1, maxAutoDomDetailOrders: 1, forceDomCustomFileScan: true, pushOrders: async (orders) => {
+                capture = createEtsyCapture(orders, { id: crypto.randomUUID(), scope: manualScope(config), shopId: config.shopId, limit: 1 });
+                capture.status = 'IMPORTING';
+                await saveManualRun(capture);
+                return {};
+            } });
+            const client = createLngWebBeCommandClient({ getConfig: async () => config });
+            resumeEtsyImport({ run: capture, client, scope: manualScope(config), save: saveManualRun, downloadFile: downloadManualFile })
+                .catch(async (error) => { capture.status = 'PAUSED'; capture.error = error.code || 'IMPORT_INTERRUPTED'; await saveManualRun(capture); })
+                .finally(() => { etsyManualRunning = false; });
+            return capture;
+        } catch (error) {
+            etsyManualRunning = false;
+            throw error;
+        }
+    }
     if (action === 'ETSY_MANUAL_IMPORT') {
         if (!run) throw new Error('Kéo đơn trước');
         etsyManualRunning = true;
@@ -3217,6 +3240,7 @@ async function handleGetEtsyOrdersAndPush(payload = {}) {
     if (customImportOptions.customFileDetailMode === "auto_upload_detail") {
         const autoDetailSummary = await runAutoUploadDomDetailScan({
             backendOrders,
+            targetOrderId,
             maxAutoDomDetailOrders,
             forceDomCustomFileScan,
             waitMs: Number(payload.domDetailWaitMs || payload.waitMs || 3000),
@@ -4364,6 +4388,7 @@ function itemAlreadyHasDomCustomFile(item = {}) {
 
 function findOrdersNeedingDomCustomFileScan(backendOrders = [], options = {}) {
     const forceDomCustomFileScan = options.forceDomCustomFileScan === true;
+    const targetOrderId = String(options.targetOrderId || "").trim();
     const candidates = [];
     const seenOrders = new Set();
 
@@ -4372,11 +4397,12 @@ function findOrdersNeedingDomCustomFileScan(backendOrders = [], options = {}) {
         if (!orderId || seenOrders.has(orderId)) continue;
 
         const items = Array.isArray(order?.items) ? order.items : [];
+        const scanTargetOrder = forceDomCustomFileScan && orderId === targetOrderId;
         const uploadItems = [];
         for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
             const item = items[itemIndex] || {};
             const uploadFields = getCustomerUploadSignalFieldsInItem(item);
-            if (!uploadFields.length) continue;
+            if (!uploadFields.length && !scanTargetOrder) continue;
             if (!forceDomCustomFileScan && itemAlreadyHasDomCustomFile(item)) continue;
 
             console.log("[LNG][sw][CUSTOM_FILE_AUTO_DETAIL][UPLOAD_SIGNAL_FIELD]", {
@@ -4402,7 +4428,7 @@ function findOrdersNeedingDomCustomFileScan(backendOrders = [], options = {}) {
                 orderId,
                 ...uploadItems[0],
                 items: uploadItems,
-                reason: "customization_upload_signal"
+                reason: scanTargetOrder ? "targeted_reimport" : "customization_upload_signal"
             });
         }
     }
@@ -4412,6 +4438,7 @@ function findOrdersNeedingDomCustomFileScan(backendOrders = [], options = {}) {
 
 async function runAutoUploadDomDetailScan({
     backendOrders,
+    targetOrderId,
     maxAutoDomDetailOrders = 10,
     forceDomCustomFileScan = false,
     waitMs = 3000,
@@ -4420,7 +4447,8 @@ async function runAutoUploadDomDetailScan({
     taskType = "IMPORT_ORDERS"
 } = {}) {
     const candidates = findOrdersNeedingDomCustomFileScan(backendOrders, {
-        forceDomCustomFileScan
+        forceDomCustomFileScan,
+        targetOrderId
     });
     // Missing scans must block readiness, including scans that fail or exceed the cap.
     for (const candidate of candidates) {

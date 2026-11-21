@@ -267,6 +267,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  $('#btnReimportOrder').addEventListener('click', async () => {
+    const orderId = $('#reimportOrderId').value.trim();
+    if (!/^\d+$/.test(orderId)) {
+      alert('Etsy Order ID phải là chuỗi số hợp lệ');
+      return;
+    }
+
+    log(`Đang re-import order ${orderId}…`);
+    $('#btnReimportOrder').disabled = true;
+    try {
+      const response = await sendMessageWithTimeout({
+        action: 'ETSY_MANUAL_REIMPORT',
+        payload: { orderId }
+      });
+      if (!response?.ok) throw new Error(response?.message || 'Không thể re-import đơn');
+      renderOrders(response.data);
+      log(`Đã bắt đầu re-import order ${orderId}.`);
+    } catch (error) {
+      log(`Lỗi re-import order ${orderId}: ${error.message}`);
+      alert(`Lỗi re-import: ${error.message}`);
+    } finally {
+      $('#btnReimportOrder').disabled = false;
+    }
+  });
+
   $('#btnConfirmImport').addEventListener('click', async () => {
     log('Đang bắt đầu import đơn và upload ảnh…');
     $('#btnConfirmImport').disabled = true;
