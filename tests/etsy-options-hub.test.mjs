@@ -45,6 +45,67 @@ test('buildActivityRuns aggregates events by task run', () => {
   assert.equal(runs[0].events.length, 2);
 });
 
+test('command-agent UPLOAD_TRACKING writes per-item failures to the local activity log', async () => {
+  const local = {};
+  const storage = {
+    get: async () => local,
+    set: async (value) => Object.assign(local, value),
+  };
+  const ctx = vm.createContext({
+    Set,
+    extensionLogger: createExtensionLogger({ storage }),
+    trackingCommandLocks: new Set(),
+    runSerialTrackingBatch: async () => ({
+      importedCount: 0,
+      failedCount: 1,
+      results: [{ etsyStatus: 'FAILED', errorMessage: 'Etsy rejected tracking' }],
+    }),
+    handleUploadTrackingToEtsy: async () => assert.fail('upload is stubbed by the batch runner'),
+    verifyTrackingOnEtsy: async () => assert.fail('verify is stubbed by the batch runner'),
+  });
+  const start = source.indexOf('async function runEtsyTrackingCommand(');
+  const end = source.indexOf('async function handleUploadTrackingToEtsy(', start);
+  vm.runInContext(source.slice(start, end), ctx);
+
+  const result = await ctx.runEtsyTrackingCommand({ commandId: 'cmd-1', items: [{}] });
+
+  const events = await ctx.extensionLogger.getEvents();
+  assert.equal(events.length, 2);
+  assert.equal(events[0].context.taskType, 'UPLOAD_TRACKING');
+  assert.equal(events[1].level, 'error');
+  assert.match(events[1].message, /Etsy rejected tracking/);
+  assert.equal(result.success, false);
+});
+
+test('command-agent UPLOAD_TRACKING writes a completed task to the local activity log', async () => {
+  const local = {};
+  const storage = {
+    get: async () => local,
+    set: async (value) => Object.assign(local, value),
+  };
+  const ctx = vm.createContext({
+    Set,
+    extensionLogger: createExtensionLogger({ storage }),
+    trackingCommandLocks: new Set(),
+    runSerialTrackingBatch: async () => ({
+      importedCount: 1,
+      failedCount: 0,
+      results: [{ etsyStatus: 'VERIFIED' }],
+    }),
+    handleUploadTrackingToEtsy: async () => assert.fail('upload is stubbed by the batch runner'),
+    verifyTrackingOnEtsy: async () => assert.fail('verify is stubbed by the batch runner'),
+  });
+  const start = source.indexOf('async function runEtsyTrackingCommand(');
+  const end = source.indexOf('async function handleUploadTrackingToEtsy(', start);
+  vm.runInContext(source.slice(start, end), ctx);
+
+  await ctx.runEtsyTrackingCommand({ commandId: 'cmd-1', items: [{}] });
+
+  const events = await ctx.extensionLogger.getEvents();
+  assert.equal(events.length, 2);
+  assert.equal(events[1].context.activityStatus, 'SUCCEEDED');
+});
+
 test('HEARTBEAT_NOW handler executes heartbeatOnly and returns agent info', async () => {
   const local = {
     lngWebBeClientId: 'client-123',

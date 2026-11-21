@@ -1,4 +1,5 @@
 import { logExtensionEvent } from "./extension-logger.js";
+import { createExtensionLogger } from "./extensionLogger.mjs";
 import {
     ensurePageTabReady,
     ETSY_TAB_READY_TIMEOUT_MS,
@@ -24,6 +25,7 @@ const CONFIG = {
 console.log("[LNG][sw] service-worker.js loaded", CONFIG);
 
 const trackingCommandLocks = new Set();
+const extensionLogger = createExtensionLogger({ storage: chrome.storage.local });
 const ETSY_AUTO_ALARM_PREFIX = "ETSY_AUTO_";
 const ETSY_AUTO_SYNC_ALARM = "ETSY_AUTO_CFG_SYNC";
 const ETSY_MESSAGE_MONITOR_ALARM = "ETSY_MESSAGE_SYNC_MONITOR";
@@ -3824,6 +3826,12 @@ async function runEtsyTrackingCommand({ commandId, items, renewLease }) {
     trackingCommandLocks.add(commandId);
 
     try {
+        await extensionLogger.logInfo('Starting Etsy tracking command', {
+            taskType: 'UPLOAD_TRACKING',
+            commandId,
+            activityStatus: 'RUNNING',
+            itemCount: Array.isArray(items) ? items.length : 0,
+        });
         const result = await runSerialTrackingBatch({
             items: Array.isArray(items) ? items : [],
             beforeEach: renewLease,
@@ -3831,12 +3839,38 @@ async function runEtsyTrackingCommand({ commandId, items, renewLease }) {
             verify: async (row) => verifyTrackingOnEtsy(row)
         });
         const verifiedCount = result.results.filter((row) => row.etsyStatus === "VERIFIED").length;
-        return {
+        const commandResult = {
             ...result,
             success: verifiedCount === result.results.length,
             importedCount: verifiedCount,
             failedCount: result.results.length - verifiedCount
         };
+        if (commandResult.success) {
+            await extensionLogger.logInfo('Etsy tracking command completed', {
+                taskType: 'UPLOAD_TRACKING',
+                commandId,
+                activityStatus: 'SUCCEEDED',
+                itemCount: result.results.length,
+            });
+        } else {
+            const failed = result.results.find((row) => row.etsyStatus !== "VERIFIED");
+            await extensionLogger.logError(null, {
+                taskType: 'UPLOAD_TRACKING',
+                commandId,
+                activityStatus: 'FAILED',
+                failedCount: commandResult.failedCount,
+                errorMessage: failed?.errorMessage || 'Etsy did not verify the submitted tracking',
+            }, `Etsy tracking command failed: ${failed?.errorMessage || 'Etsy did not verify the submitted tracking'}`);
+        }
+        return commandResult;
+    } catch (error) {
+        await extensionLogger.logError(error, {
+            taskType: 'UPLOAD_TRACKING',
+            commandId,
+            activityStatus: 'FAILED',
+            errorMessage: error?.message || String(error),
+        }, `Etsy tracking command failed: ${error?.message || String(error)}`);
+        throw error;
     } finally {
         trackingCommandLocks.delete(commandId);
     }
