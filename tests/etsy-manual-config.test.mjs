@@ -6,9 +6,9 @@ const source = readFileSync(new URL('../service-worker.js', import.meta.url), 'u
 const handler = source.slice(source.indexOf('async function handleManualMessage('), source.indexOf('let etsyAutoConfigLastSnapshot'));
 function setup({ identity, run, remoteRun, failure } = {}) {
   const session = {}; const local = { etsyManualRun: run, etsyRemoteOrderRun: remoteRun }; let presenceStarted = false;
-  const ctx = vm.createContext({ URL, etsyManualRunning: false, lngWebBeAgentRunning: false, socketTaskLocks: new Set(), LNG_WEB_BE_COMMAND_ALARM: 'test',
+  const ctx = vm.createContext({ URL, etsyManualRunning: false, lngWebBeAgentRunning: false, trackingCommandLocks: new Set(), LNG_WEB_BE_COMMAND_ALARM: 'test',
     chrome: { storage: { session: { set: async value => Object.assign(session, value) }, local: { get: async () => local, set: async value => Object.assign(local, value) } }, alarms: { clear: async () => {} } },
-    disconnectSocket: async () => {}, createLngWebBeCommandClient: () => ({ getIdentity: async () => { if (failure) throw failure; return identity; } }),
+    createLngWebBeCommandClient: () => ({ getIdentity: async () => { if (failure) throw failure; return identity; } }),
     startLngWebBeAgent: async () => { presenceStarted = Boolean(session.etsyManualConfig?.extensionToken && local.etsyManualMode); },
   });
   vm.runInContext(handler, ctx);

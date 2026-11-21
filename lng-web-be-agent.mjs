@@ -5,10 +5,11 @@ function completionPayload(leaseToken, result) {
     importJobId: result.importJobId || null,
     importedCount: Number(result.importedCount || 0),
     failedCount: Number(result.failedCount || 0),
+    ...(Array.isArray(result.results) ? { results: result.results } : {}),
   };
 }
 
-export async function executeNextLngWebBeCommand({ client, executeOrders, executeAds, validateCommand, isRetryableError }) {
+export async function executeNextLngWebBeCommand({ client, executeOrders, executeAds, executeTracking, validateCommand, isRetryableError }) {
   await client.heartbeat();
   const claim = await client.claimNext();
   if (!claim?.command || !claim.leaseToken) return { ok: true, idle: true };
@@ -17,6 +18,8 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
     ? executeOrders
     : claim.command.type === "IMPORT_ADS_SPEND"
       ? executeAds
+      : claim.command.type === "UPLOAD_TRACKING"
+        ? executeTracking
       : null;
   if (!executor) return { ok: false, skipped: true, reason: "UNSUPPORTED_COMMAND" };
   if (!/^[a-f0-9]{24}$/i.test(String(claim.command.id || ""))) {
@@ -27,6 +30,9 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
   }
   const validationError = validateCommand?.(claim.command);
   if (validationError) return { ok: false, skipped: true, reason: validationError };
+  if (claim.command.type === "UPLOAD_TRACKING" && (!Array.isArray(claim.command.items) || !claim.command.items.length)) {
+    return { ok: false, skipped: true, reason: "Tracking commands must contain at least one item" };
+  }
 
   await client.start(claim.command.id, claim.leaseToken);
   try {
@@ -35,6 +41,10 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
       numDays: claim.command.numDays,
       dateFrom: claim.command.dateFrom,
       dateTo: claim.command.dateTo,
+      items: claim.command.items,
+      renewLease: typeof client.renew === "function"
+        ? () => client.renew(claim.command.id, claim.leaseToken)
+        : null,
     });
     await client.complete(claim.command.id, completionPayload(claim.leaseToken, result));
     return { ok: true, command: claim.command, result };

@@ -19,6 +19,32 @@ test('Operations Hub exposes a one-order re-import action', async () => {
   assert.match(worker, /forceDomCustomFileScan: true/);
 });
 
+test('Operations Hub exposes a direct one-order tracking upload', async () => {
+  const [html, options, worker] = await Promise.all([
+    readFile(new URL('../options.html', import.meta.url), 'utf8'),
+    readFile(new URL('../options.js', import.meta.url), 'utf8'),
+    readFile(new URL('../service-worker.js', import.meta.url), 'utf8')
+  ]);
+
+  assert.match(html, /id="trackingOrderId"/);
+  assert.match(html, /id="trackingNumber"/);
+  assert.match(html, /id="btnUploadTracking"/);
+  assert.match(options, /action: 'ETSY_MANUAL_UPLOAD_TRACKING'/);
+  assert.match(worker, /action === 'ETSY_MANUAL_UPLOAD_TRACKING'/);
+  assert.match(worker, /handleUploadTrackingToEtsy\(\{ orderId, trackingNumber, carrier \}\)/);
+});
+
+test('falls back Viettel Post to USPS for USPS-format tracking', async () => {
+  const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function normalizeEtsyCarrierName(');
+  const end = source.indexOf('function getOrderTrackingNumber', start);
+  const ctx = vm.createContext({});
+  vm.runInContext(`${source.slice(start, end)}; globalThis.inferCarrier = inferEtsyTrackingCarrier;`, ctx);
+
+  assert.equal(ctx.inferCarrier('9214490374008505076402', 'VIETTEL_POST'), 'USPS');
+  assert.equal(ctx.inferCarrier('YT123456789', 'VIETTEL_POST'), 'VIETTEL_POST');
+});
+
 test('re-import validates its ID and preserves an unfinished preview', async () => {
   const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
   const handler = source.slice(source.indexOf('async function handleManualMessage('), source.indexOf('let etsyAutoConfigLastSnapshot'));

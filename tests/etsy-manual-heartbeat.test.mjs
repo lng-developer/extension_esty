@@ -13,7 +13,7 @@ function setup({ manual = true, token = 'lng_ext_session', status = 200, acknowl
   const requests = []; const alarms = new Map(); let onAlarm;
   let completed = false; let collections = 0;
   const ctx = vm.createContext({ URL, Date, setInterval, clearInterval, runRemoteEtsyOrders, downloadManualFile: async () => {}, handleGetEtsyOrdersAndPush: async options => { collections++; if (collectionError) throw collectionError; assert.equal(options.maxTotalOrders, 1); await options.pushOrders([{ orderId: 'order', items: [{ transactionId: 'item', quantity: 1 }] }]); }, console: { error() {} }, crypto: { randomUUID: () => 'new-client' },
-    LNG_WEB_BE_COMMAND_ALARM: 'commands', LNG_WEB_BE_CLIENT_ID_KEY: 'lngWebBeClientId', LNG_WEB_BE_AGENT_STATUS_KEY: 'agentStatus', lngWebBeAgentRunning: false, etsyManualRunning: false, socketTaskLocks: new Set(), manualConfig: async () => session.etsyManualConfig, manualScope: cfg => `${cfg.apiBaseUrl}|shop`,
+    LNG_WEB_BE_COMMAND_ALARM: 'commands', LNG_WEB_BE_CLIENT_ID_KEY: 'lngWebBeClientId', LNG_WEB_BE_AGENT_STATUS_KEY: 'agentStatus', lngWebBeAgentRunning: false, etsyManualRunning: false, trackingCommandLocks: new Set(), manualConfig: async () => session.etsyManualConfig, manualScope: cfg => `${cfg.apiBaseUrl}|shop`,
     isEtsyManualMode: async () => local.etsyManualMode,
     chrome: { runtime: { getManifest: () => ({ version: '1.1.0' }) }, storage: {
       local: { get: async () => local, set: async value => Object.assign(local, value) }, session: { get: async () => session, set: async value => Object.assign(session, structuredClone(value)), remove: async key => { delete session[key]; } },

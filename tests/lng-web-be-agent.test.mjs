@@ -25,6 +25,47 @@ test("starts, executes and completes an Orders command once", async () => {
   ]);
 });
 
+test("starts, executes and completes a tracking batch command once", async () => {
+  const calls = [];
+  const items = [{ orderId: "4213186862", trackingNumber: "9400111899560000000000", carrier: "USPS" }];
+  const client = {
+    heartbeat: async () => calls.push("heartbeat"),
+    claimNext: async () => ({ command: { id: "507f1f77bcf86cd799439012", type: "UPLOAD_TRACKING", items }, leaseToken: "lease-token-1234567890" }),
+    start: async (id, lease) => calls.push(["start", id, lease]),
+    complete: async (id, payload) => calls.push(["complete", id, payload]),
+  };
+
+  const result = await executeNextLngWebBeCommand({
+    client,
+    executeTracking: async ({ commandId, items: commandItems }) => {
+      assert.equal(commandId, "507f1f77bcf86cd799439012");
+      assert.deepEqual(commandItems, items);
+      return { importedCount: 1, failedCount: 0, results: [{ orderId: "4213186862", ok: true }] };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [
+    "heartbeat",
+    ["start", "507f1f77bcf86cd799439012", "lease-token-1234567890"],
+    ["complete", "507f1f77bcf86cd799439012", { leaseToken: "lease-token-1234567890", success: true, importJobId: null, importedCount: 1, failedCount: 0, results: [{ orderId: "4213186862", ok: true }] }],
+  ]);
+});
+
+test("does not start a tracking command without rows", async () => {
+  const result = await executeNextLngWebBeCommand({
+    client: {
+      heartbeat: async () => {},
+      claimNext: async () => ({ command: { id: "507f1f77bcf86cd799439012", type: "UPLOAD_TRACKING", items: [] }, leaseToken: "lease-token-1234567890" }),
+      start: async () => assert.fail("must not start"),
+      complete: async () => assert.fail("must not complete"),
+    },
+    executeTracking: async () => assert.fail("must not execute"),
+  });
+
+  assert.deepEqual(result, { ok: false, skipped: true, reason: "Tracking commands must contain at least one item" });
+});
+
 test("leaves unknown commands uncompleted", async () => {
   let completed = false;
   const result = await executeNextLngWebBeCommand({

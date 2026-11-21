@@ -13,10 +13,13 @@ test("runs the authenticated command loop and uploads both supported CSV imports
   assert.match(worker, /toEtsyAdsCsv/);
 });
 
-test("keeps Socket tasks to tracking without falling back when token setup is invalid", () => {
-  assert.match(worker, /const isTrackingTask = taskType === "ETSY_UPLOAD_TRACKING" \|\| taskType === "UPLOAD_TRACKING"/);
-  assert.match(worker, /if \(!isTrackingTask\) \{/);
-  assert.match(worker, /reason: "SOCKET_TRANSPORT_DISABLED"/);
+test("runs tracking through the authenticated command agent without Socket.IO", () => {
+  assert.match(worker, /executeTracking: async \(\{ commandId, items, renewLease \}\)/);
+  assert.match(worker, /lease\.command\.type === "UPLOAD_TRACKING"/);
+  assert.doesNotMatch(worker, /from "\.\/socket-client\.js"/);
+  assert.doesNotMatch(worker, /server:task/);
+  assert.doesNotMatch(worker, /client:ack/);
+  assert.match(worker, /Legacy Socket automation is disabled; use LNG commands/);
 });
 
 test("rejects legacy popup messages for Orders and Ads", () => {

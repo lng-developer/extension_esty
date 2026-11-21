@@ -292,6 +292,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  $('#btnUploadTracking').addEventListener('click', async () => {
+    const orderId = $('#trackingOrderId').value.trim();
+    const trackingNumber = $('#trackingNumber').value.trim();
+    const carrier = $('#trackingCarrier').value.trim();
+    if (!/^\d+$/.test(orderId)) return alert('Etsy Order ID phải là chuỗi số hợp lệ');
+    if (!trackingNumber) return alert('Cần nhập Tracking Number');
+
+    $('#btnUploadTracking').disabled = true;
+    log(`Đang push tracking cho order ${orderId}…`);
+    try {
+      const response = await sendMessageWithTimeout({
+        action: 'ETSY_MANUAL_UPLOAD_TRACKING',
+        payload: { orderId, trackingNumber, carrier }
+      });
+      if (!response?.ok) throw new Error(response?.message || 'Không thể push tracking');
+      log(`Đã push tracking cho order ${orderId}.`);
+      alert(`Đã push tracking cho order ${orderId}.`);
+    } catch (error) {
+      log(`Lỗi push tracking order ${orderId}: ${error.message}`);
+      alert(`Lỗi push tracking: ${error.message}`);
+    } finally {
+      $('#btnUploadTracking').disabled = false;
+    }
+  });
+
   $('#btnConfirmImport').addEventListener('click', async () => {
     log('Đang bắt đầu import đơn và upload ảnh…');
     $('#btnConfirmImport').disabled = true;

@@ -1,12 +1,3 @@
-import {
-    connectSocket,
-    disconnectSocket,
-    getSocketStatus,
-    autoConnectSocketIfReady,
-    pullPendingTasksNow,
-    setSocketTaskHandler,
-    emitSocketEvent
-} from "./socket-client.js";
 import { logExtensionEvent } from "./extension-logger.js";
 import {
     ensurePageTabReady,
@@ -16,6 +7,7 @@ import {
 import { distributeCustomFilesByItem } from "./etsy-custom-file-mapping.mjs";
 import { createLngWebBeCommandClient } from "./lng-web-be-command-client.mjs";
 import { executeNextLngWebBeCommand } from "./lng-web-be-agent.mjs";
+import { runSerialTrackingBatch } from "./etsy-tracking-command.mjs";
 import { toEtsyAdsCsv, toEtsySoldOrderItemsCsv } from "./lng-web-be-import-csv.mjs";
 import { waitForEtsyImport, resumeEtsyImport, originalEtsyFileUrl } from "./etsy-import-runner.mjs";
 import { createEtsyCapture, runRemoteEtsyOrders } from './etsy-remote-order-runner.mjs';
@@ -31,9 +23,7 @@ const CONFIG = {
 
 console.log("[LNG][sw] service-worker.js loaded", CONFIG);
 
-const socketTaskLocks = new Set();
-const autoUploadTrackingLocks = new Set();
-let uploadTrackingQueue = Promise.resolve();
+const trackingCommandLocks = new Set();
 const ETSY_AUTO_ALARM_PREFIX = "ETSY_AUTO_";
 const ETSY_AUTO_SYNC_ALARM = "ETSY_AUTO_CFG_SYNC";
 const ETSY_MESSAGE_MONITOR_ALARM = "ETSY_MESSAGE_SYNC_MONITOR";
@@ -84,12 +74,12 @@ async function downloadManualFile(file) {
 
 async function handleManualMessage(action, payload) {
     if (action === 'ETSY_MANUAL_CONFIG') {
-        if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
+        if (etsyManualRunning || lngWebBeAgentRunning || trackingCommandLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
         const apiBaseUrl = new URL(payload.apiBaseUrl).origin;
         if (!['http://192.168.1.3:3000', 'http://localhost:3000', 'http://localhost:5000', 'https://dev-api.lngmerch.co', 'https://ecomatrix.lngmerch.co'].includes(apiBaseUrl) || !String(payload.extensionToken).startsWith('lng_ext_')) throw new Error('Cấu hình không hợp lệ');
         const identity = await createLngWebBeCommandClient({ getConfig: async () => ({ apiBaseUrl, extensionToken: payload.extensionToken }) }).getIdentity();
         if (identity?.tokenType !== 'EXTENSION' || !/^[a-f\d]{24}$/i.test(identity.shop?.id)) throw new Error('Backend chưa hỗ trợ xác thực shop từ token. Cần cập nhật BE.');
-        if (etsyManualRunning || lngWebBeAgentRunning || socketTaskLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
+        if (etsyManualRunning || lngWebBeAgentRunning || trackingCommandLocks.size) throw new Error('Đợi tác vụ hiện tại kết thúc');
         const { etsyManualRun: previousRun, etsyRemoteOrderRun: remoteRun } = await chrome.storage.local.get(['etsyManualRun', 'etsyRemoteOrderRun']);
         if (remoteRun && !remoteRun.acknowledged && remoteRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Remote checkpoint thuộc backend/shop khác; kiểm tra task cũ trước.');
         if (previousRun && previousRun.status !== 'COMPLETED' && previousRun.scope !== `${apiBaseUrl}|${identity.shop.id}`) throw new Error('Lượt kéo thuộc backend/shop khác. Dùng token cũ hoặc xóa preview trước.');
@@ -108,7 +98,6 @@ async function handleManualMessage(action, payload) {
         if (typeof chrome?.alarms?.create === 'function') {
             await chrome.alarms.create(LNG_WEB_BE_COMMAND_ALARM, { periodInMinutes: 1 });
         }
-        await disconnectSocket();
         await startLngWebBeAgent();
         return verified;
     }
@@ -119,6 +108,19 @@ async function handleManualMessage(action, payload) {
     if (!await isEtsyManualMode()) throw new Error('Lưu cấu hình chế độ thủ công trước');
     const config = await manualConfig();
     if (etsyManualRunning) throw new Error('Import đang chạy');
+    if (action === 'ETSY_MANUAL_UPLOAD_TRACKING') {
+        const orderId = String(payload?.orderId || '').trim();
+        const trackingNumber = String(payload?.trackingNumber || '').trim();
+        const carrier = String(payload?.carrier || '').trim();
+        if (!/^\d+$/.test(orderId)) throw new Error('Etsy Order ID phải là chuỗi số hợp lệ');
+        if (!trackingNumber) throw new Error('Cần nhập Tracking Number');
+        etsyManualRunning = true;
+        try {
+            return await handleUploadTrackingToEtsy({ orderId, trackingNumber, carrier });
+        } finally {
+            etsyManualRunning = false;
+        }
+    }
     if (action === 'ETSY_MANUAL_PULL') {
         if (run && !['COMPLETED', 'PREVIEW'].includes(run.status)) throw new Error('Tiếp tục hoặc xóa checkpoint hiện tại trước');
         etsyManualRunning = true;
@@ -191,25 +193,6 @@ let etsyAutoConfigLastSnapshot = {
     error: null
 };
 
-setSocketTaskHandler(handleSocketTask);
-startEtsyMessageMonitorAlarm()
-    .then(async (result) => {
-        if (result?.disabled) {
-            console.log("[LNG][sw][ETSY_MESSAGE_MONITOR][AUTO_DISABLED]", result);
-            return;
-        }
-
-        return chrome.alarms.get(ETSY_MESSAGE_MONITOR_ALARM).then((alarm) => {
-            console.log("[LNG][sw][ETSY_MESSAGE_MONITOR][BOOTSTRAP_ALARM_READY]", {
-                name: alarm?.name || ETSY_MESSAGE_MONITOR_ALARM,
-                periodInMinutes: alarm?.periodInMinutes || null,
-                scheduledTime: alarm?.scheduledTime || null
-            });
-        });
-    })
-    .catch((error) => {
-        console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][BOOTSTRAP_ALARM_ERROR]", error);
-    });
 
 async function getLngWebBeAgentConfig() {
     const saved = await chrome.storage.local.get([
@@ -258,7 +241,7 @@ async function runLngWebBeAgentOnce() {
                 ...(agent?.shopId ? { shopId: agent.shopId } : {}),
                 ...(agent?.shopName ? { shopName: agent.shopName } : {})
             });
-            if (agent?.provider !== 'ETSY' || agent.protocolVersion !== 1) return { ok: true, idle: true };
+            if (agent?.provider !== "ETSY" || agent.protocolVersion !== 1) return { ok: true, idle: true };
             return await runRemoteEtsyWorker(client);
         }
         return await executeNextLngWebBeCommand({
@@ -307,6 +290,9 @@ async function runLngWebBeAgentOnce() {
                     }
                 });
                 return { importJobId: data.push?.importJobId || null, importedCount: data.rows, failedCount: 0 };
+            },
+            executeTracking: async ({ commandId, items, renewLease }) => {
+                return await runEtsyTrackingCommand({ commandId, items, renewLease });
             }
         });
     } finally {
@@ -316,7 +302,7 @@ async function runLngWebBeAgentOnce() {
 
 async function runRemoteEtsyWorker(client) {
     const saved = await chrome.storage.local.get(['etsyManualRun', 'etsyRemoteOrderRun']);
-    if (etsyManualRunning || (saved.etsyManualRun && saved.etsyManualRun.status !== 'COMPLETED') || socketTaskLocks.size) return { ok: true, skipped: true, reason: 'MANUAL_BUSY' };
+    if (etsyManualRunning || (saved.etsyManualRun && saved.etsyManualRun.status !== 'COMPLETED') || trackingCommandLocks.size) return { ok: true, skipped: true, reason: 'MANUAL_BUSY' };
     const config = await manualConfig();
     const scope = manualScope(config);
     let { etsyRemoteOrderLease: lease } = await chrome.storage.session.get('etsyRemoteOrderLease');
@@ -364,7 +350,13 @@ async function runRemoteEtsyWorker(client) {
             lease.command = await client.start(lease.command.id, lease.leaseToken);
             await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
         }
-        const result = await runRemoteEtsyOrders({ command: lease.command, client, scope, assertLease,
+        const result = lease.command.type === "UPLOAD_TRACKING"
+            ? await runEtsyTrackingCommand({
+                commandId: lease.command.id,
+                items: lease.command.items,
+                renewLease: () => assertLease(undefined, true)
+            })
+            : await runRemoteEtsyOrders({ command: lease.command, client, scope, assertLease,
             load: async () => {
                 const { etsyRemoteOrderRun: run } = await chrome.storage.local.get('etsyRemoteOrderRun');
                 return run?.acknowledged && run.id !== lease.command.id ? null : run;
@@ -504,16 +496,7 @@ function sendSocketTaskLog(message, data = null) {
     const prefix = getServiceLogPrefixFromMessage(message);
     const prefixedMessage = prefixDebugMessage(message, prefix);
 
-    console.log("[LNG][SOCKET_TASK]", prefixedMessage, data || "");
-
-    chrome.runtime.sendMessage({
-        type: "SOCKET_LOG",
-        payload: {
-            message: prefixedMessage,
-            data,
-            timestamp: new Date().toLocaleTimeString()
-        }
-    }).catch(() => { });
+    console.log("[LNG][RUNTIME]", prefixedMessage, data || "");
 }
 
 async function logEtsyAutoConfigEvent(args = {}) {
@@ -736,9 +719,14 @@ function normalizeEtsyCarrierName(value) {
 
 function inferEtsyTrackingCarrier(trackingNumber, explicitCarrier = "") {
     const explicit = String(explicitCarrier || "").trim();
-    if (explicit) return normalizeEtsyCarrierName(explicit);
-
     const value = String(trackingNumber || "").trim().toUpperCase();
+    if (explicit) {
+        const normalized = normalizeEtsyCarrierName(explicit);
+        if (normalized === "VIETTEL_POST" && (value.startsWith("92") || value.startsWith("42"))) {
+            return "USPS";
+        }
+        return normalized;
+    }
 
     if (value.startsWith("92") || value.startsWith("42")) return "USPS";
     if (value.startsWith("UK") || value.startsWith("UL")) return "Yanwen";
@@ -810,7 +798,7 @@ function getOrderTrackingNumber(order) {
         if (tracking) {
             return {
                 trackingNumber: tracking,
-                carrier: orderCarrier || inferEtsyTrackingCarrier(tracking),
+                carrier: inferEtsyTrackingCarrier(tracking, orderCarrier),
                 itemOrderItemId: undefined,
                 trackingStatus: order?.tracking_info?.status || order?.trackingInfo?.status || undefined,
                 trackingUpdatedAt:
@@ -851,7 +839,7 @@ function getOrderTrackingNumber(order) {
             if (tracking) {
                 return {
                     trackingNumber: tracking,
-                    carrier: itemCarrier || inferEtsyTrackingCarrier(tracking),
+                    carrier: inferEtsyTrackingCarrier(tracking, itemCarrier),
                     itemOrderItemId: item?.orderItemId || item?.order_item_id || item?.id || item?._id || undefined,
                     trackingStatus: item?.tracking_info?.status || item?.trackingInfo?.status || undefined,
                     trackingUpdatedAt:
@@ -881,7 +869,7 @@ function extractAutoTrackingCandidates(orders, mongoShopId) {
             return {
                 orderId,
                 trackingNumber: tracking.trackingNumber,
-                carrier: tracking.carrier || inferEtsyTrackingCarrier(tracking.trackingNumber),
+                carrier: inferEtsyTrackingCarrier(tracking.trackingNumber, tracking.carrier),
                 shopId: String(order.shopId || "").trim(),
                 orderStatus: order?.orderStatus || order?.status || undefined,
                 sumbittedoetsy: order?.sumbittedoetsy === true,
@@ -1132,7 +1120,7 @@ async function runAutoUploadTrackingFromOrdersApi(cfg) {
         const candidate = candidates[index];
         const batchIndex = index + 1;
         const batchTotal = candidates.length;
-        const carrier = candidate.carrier || inferEtsyTrackingCarrier(candidate.trackingNumber);
+        const carrier = inferEtsyTrackingCarrier(candidate.trackingNumber, candidate.carrier);
         const rowTaskId = `auto_upload_tracking:${mongoShopId}:${candidate.orderId}`;
         const rowRawData = {
             orderId: candidate.orderId,
@@ -2097,8 +2085,10 @@ async function handleUploadTrackingSocketTask(task) {
     ).trim();
     const orderId = String(payload.orderId || "").trim();
     const trackingNumber = String(payload.trackingNumber || "").trim();
-    const carrier = normalizeEtsyCarrierName(payload.carrier || payload.carrierCode || payload.shippingCarrier) ||
-        inferEtsyTrackingCarrier(trackingNumber);
+    const carrier = inferEtsyTrackingCarrier(
+        trackingNumber,
+        payload.carrier || payload.carrierCode || payload.shippingCarrier
+    );
     const batchGroupId = String(payload.batchGroupId || payload.batchId || "").trim();
     const batchIndex = Number.isFinite(Number(payload.batchIndex))
         ? Number(payload.batchIndex)
@@ -2821,62 +2811,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         handleManualMessage(message.action, message.payload || {}).then((data) => sendResponse({ ok: true, data })).catch((error) => sendResponse({ ok: false, message: error.message }));
         return true;
     }
+    if ([
+        "ETSY_RELOAD_AUTO_CONFIG",
+        "ETSY_AUTO_CONFIG_STATUS",
+        "ETSY_MESSAGE_MONITOR_TICK",
+        "ETSY_MESSAGE_MONITOR_STATUS"
+    ].includes(message?.action)) {
+        sendResponse({ ok: false, message: "Legacy Socket automation is disabled; use LNG commands." });
+        return false;
+    }
     console.log("[LNG][sw] onMessage", {
         action: message?.action,
         type: message?.type,
         message,
         sender: sender?.id
     });
-
-    if (
-        message?.type === "SOCKET_CONNECT" ||
-        message?.type === "SOCKET_DISCONNECT" ||
-        message?.type === "SOCKET_STATUS"
-    ) {
-        console.log("[LNG][sw][SOCKET_ROUTER] received", {
-            type: message.type
-        });
-
-        (async () => {
-            try {
-                let response;
-
-                if (message.type === "SOCKET_CONNECT") {
-                    console.log("[LNG][sw][SOCKET_ROUTER] before connectSocket");
-
-                    response = await connectSocket(true);
-
-                    console.log("[LNG][sw][SOCKET_ROUTER] SOCKET_CONNECT response", response);
-                }
-
-                if (message.type === "SOCKET_DISCONNECT") {
-                    response = await disconnectSocket();
-
-                    console.log("[LNG][sw][SOCKET_ROUTER] SOCKET_DISCONNECT response", response);
-                }
-
-                if (message.type === "SOCKET_STATUS") {
-                    response = await getSocketStatus();
-
-                    console.log("[LNG][sw][SOCKET_ROUTER] SOCKET_STATUS response", response);
-                }
-
-                sendResponse(response || {
-                    ok: false,
-                    message: "Unknown socket message type"
-                });
-            } catch (error) {
-                console.error("[LNG][sw][SOCKET_ROUTER][ERROR]", error);
-
-                sendResponse({
-                    ok: false,
-                    message: error?.message || String(error)
-                });
-            }
-        })();
-
-        return true;
-    }
 
     if (message.action === "ETSY_GET_ORDERS_AND_PUSH" || message.action === "ETSY_GET_ORDERS") {
         sendResponse({ ok: false, message: "Orders are managed by the authenticated LNG Web BE agent" });
@@ -2947,24 +2896,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === "ETSY_ADS_FULL_IMPORT") {
         sendResponse({ ok: false, message: "Ads are managed by the authenticated LNG Web BE agent" });
         return false;
-    }
-
-    if (message.action === "ETSY_UPLOAD_TRACKING") {
-        handleUploadTrackingToEtsy(message.payload || {})
-            .then((data) => {
-                console.log("[LNG][sw] ETSY_UPLOAD_TRACKING done", data);
-                sendResponse({ ok: true, data });
-            })
-            .catch((error) => {
-                console.error("[LNG][sw][ETSY_UPLOAD_TRACKING_ERROR]", error);
-
-                sendResponse({
-                    ok: false,
-                    message: error.message || "Upload tracking failed"
-                });
-            });
-
-        return true;
     }
 
     if (message.action === "ETSY_MESSAGE_SYNC_DEBUG") {
@@ -3054,54 +2985,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-    autoConnectSocketIfReady();
     startLngWebBeAgent();
-    startEtsyMessageMonitorAlarm().catch((error) => {
-        console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][STARTUP_ERROR]", error);
-    });
-    startEtsyAutoConfigScheduler({ reason: "startup" }).catch((error) => {
-        console.error("[LNG][sw][ETSY_AUTO_CONFIG][STARTUP_ERROR]", error);
-    });
-    startEtsyAutoConfigSync().catch((error) => {
-        console.error("[LNG][sw][ETSY_AUTO_CONFIG][STARTUP_SYNC_ERROR]", error);
-    });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-    autoConnectSocketIfReady();
     startLngWebBeAgent();
-    startEtsyMessageMonitorAlarm().catch((error) => {
-        console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][INSTALLED_ERROR]", error);
-    });
-    startEtsyAutoConfigScheduler({ reason: "installed" }).catch((error) => {
-        console.error("[LNG][sw][ETSY_AUTO_CONFIG][INSTALLED_ERROR]", error);
-    });
-    startEtsyAutoConfigSync().catch((error) => {
-        console.error("[LNG][sw][ETSY_AUTO_CONFIG][INSTALLED_SYNC_ERROR]", error);
-    });
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
 
-    const relevantKeys = ["mongoShopId", "backendUrl", "etsyAdsBackendUrl", "lngWebBeApiBaseUrl", "extensionToken", "socketLabel", "etsyManualConfig"];
+    const relevantKeys = ["lngWebBeApiBaseUrl", "extensionToken", "etsyManualConfig"];
     const changedKeys = Object.keys(changes || {}).filter((key) => relevantKeys.includes(key));
 
     if (!changedKeys.length) return;
 
-    console.log("[LNG][sw][ETSY_AUTO_CONFIG] storage changed, reload scheduler", {
-        changedKeys
-    });
-
-    startEtsyAutoConfigScheduler({ reason: "storage_changed", force: true }).catch((error) => {
-        console.error("[LNG][sw][ETSY_AUTO_CONFIG][STORAGE_RELOAD_ERROR]", error);
-        sendSocketTaskLog("ETSY_AUTO_CONFIG storage reload error", {
-            message: error?.message || String(error)
-        });
-    });
-    if (changedKeys.some((key) => ["lngWebBeApiBaseUrl", "extensionToken", "socketLabel", "etsyManualConfig"].includes(key))) {
-        startLngWebBeAgent();
-    }
+    startLngWebBeAgent();
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -3109,36 +3008,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         await startLngWebBeAgent();
         return;
     }
-    if (await isEtsyManualMode()) return;
-    if (alarm?.name === ETSY_MESSAGE_MONITOR_ALARM) {
-        if (ETSY_MESSAGE_MONITOR_AUTO_ENABLED !== true) {
-            chrome.alarms.clear(ETSY_MESSAGE_MONITOR_ALARM).catch(() => {});
-            console.log("[LNG][sw][ETSY_MESSAGE_MONITOR] ignored alarm because auto disabled", {
-                name: alarm.name
-            });
-            return;
-        }
-
-        runEtsyMessageMonitorTick().catch((error) => {
-            console.error("[LNG][sw][ETSY_MESSAGE_MONITOR][ERROR]", error);
-            sendSocketTaskLog("ETSY_MESSAGE_MONITOR error", {
-                message: error?.message || String(error)
-            });
-        });
-        return;
-    }
-
-    handleEtsyAutoConfigAlarm(alarm).catch((error) => {
-        console.error("[LNG][sw][ETSY_AUTO_CONFIG][ALARM_ERROR]", {
-            alarmName: alarm?.name || "",
-            message: error?.message || String(error),
-            error
-        });
-        sendSocketTaskLog("ETSY_AUTO_CONFIG alarm error", {
-            alarmName: alarm?.name || "",
-            message: error?.message || String(error)
-        });
-    });
 });
 
 async function handleGetEtsyOrdersAndPush(payload = {}) {
@@ -3951,11 +3820,31 @@ function getNumericResponseField(body, key, fallback = 0) {
     return Number.isFinite(value) ? value : fallback;
 }
 
+async function runEtsyTrackingCommand({ commandId, items, renewLease }) {
+    trackingCommandLocks.add(commandId);
+
+    try {
+        return await runSerialTrackingBatch({
+            items: Array.isArray(items) ? items : [],
+            beforeEach: renewLease,
+            upload: async (row) => handleUploadTrackingToEtsy({
+                orderId: row?.orderId,
+                trackingNumber: row?.trackingNumber,
+                carrier: row?.carrier || row?.carrierCode || row?.shippingCarrier
+            })
+        });
+    } finally {
+        trackingCommandLocks.delete(commandId);
+    }
+}
+
 async function handleUploadTrackingToEtsy(payload) {
     const orderId = normalizeEtsyOrderId(payload.orderId);
     const trackingNumber = String(payload.trackingNumber || "").trim();
-    const carrier = normalizeEtsyCarrierName(payload.carrier || payload.carrierCode || payload.shippingCarrier) ||
-        inferEtsyTrackingCarrier(trackingNumber);
+    const carrier = inferEtsyTrackingCarrier(
+        trackingNumber,
+        payload.carrier || payload.carrierCode || payload.shippingCarrier
+    );
 
     if (!orderId) {
         throw new Error("Thiếu Etsy Order ID");
