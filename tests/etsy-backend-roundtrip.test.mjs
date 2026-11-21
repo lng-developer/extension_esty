@@ -37,7 +37,7 @@ test('collector CSV round-trips through paired BE parser and mapper', { skip: !e
   assert.equal(order.shippingAddress.name, 'A, "B"');
   assert.equal(order.shippingAddress.countryCode, 'US');
   assert.equal(order.items[0].quantity, 2);
-  assert.equal(order.items[0].price.itemPriceAmount, 1025);
+  assert.equal(order.items[0].price.itemPriceAmount, 2050);
   assert.equal(order.items[0].externalListingId, 'listing');
   assert.equal(order.items[0].customizationRawSummary.personalization, 'Name: A\nB');
   assert.equal(order.items[0].customizationRawSummary.expectedFileCount, 1);

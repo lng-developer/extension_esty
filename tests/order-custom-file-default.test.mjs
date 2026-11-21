@@ -54,6 +54,18 @@ test("offers a one-order reimport control that forces the customer-file scan", a
     readFile(new URL("../popup.js", import.meta.url), "utf8")
   ]);
 
+  const reimportCardAt = html.indexOf('class="reimport-card"');
+  const batchImportAt = html.indexOf('id="btnGetOrders"');
+  const triggerStart = html.indexOf('id="triggerModalOverlay"');
+  const triggerEnd = html.indexOf('<pre id="log">');
+  const reimportCard = html.slice(reimportCardAt, html.indexOf('</section>', reimportCardAt));
+
+  assert.ok(reimportCardAt >= 0, "re-import should be a visible Orders card");
+  assert.ok(reimportCardAt < batchImportAt, "re-import should appear before batch import");
+  assert.doesNotMatch(reimportCard, /id="reimportOrderId"[^>]*\sdisabled/);
+  assert.doesNotMatch(reimportCard, /id="btnReimportOrder"[^>]*\sdisabled/);
+  assert.doesNotMatch(html.slice(triggerStart, triggerEnd), /id="reimportOrderId"/);
+  assert.doesNotMatch(html.slice(triggerStart, triggerEnd), /id="btnReimportOrder"/);
   assert.match(html, /id="reimportOrderId"/);
   assert.match(html, /id="btnReimportOrder"/);
   assert.match(popup, /targetOrderId: orderId/);

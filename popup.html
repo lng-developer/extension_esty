@@ -259,6 +259,23 @@
       margin-bottom: 0;
     }
 
+    .reimport-card {
+      margin: 12px 0;
+      padding: 12px;
+      border: 1px solid #dc2626;
+      border-radius: 10px;
+      background: #1c1c1c;
+    }
+
+    .reimport-card h4 {
+      margin: 0 0 4px;
+      font-size: 14px;
+    }
+
+    .reimport-card .hint {
+      margin: 0 0 8px;
+    }
+
     .auto-config-meta {
       margin-top: 2px;
       color: #ffffff;
@@ -285,6 +302,14 @@
   <div class="hint">Dùng cho Orders và Ads qua LNG Web BE. Token không được gửi vào log.</div>
   <div id="lngWebBeAgentStatus" class="hint"></div>
 
+  <section class="reimport-card" aria-labelledby="reimportTitle">
+    <h4 id="reimportTitle">Re-import 1 đơn Etsy</h4>
+    <div class="hint">Nhập Etsy Order ID để kéo lại đúng một đơn và quét ảnh khách hàng.</div>
+    <label for="reimportOrderId">Etsy Order ID</label>
+    <input id="reimportOrderId" type="text" inputmode="numeric" placeholder="Ví dụ: 4213186862" />
+    <button id="btnReimportOrder">Re-import đơn này</button>
+  </section>
+
   <div class="main-actions">
     <button id="btnSaveCfg" class="secondary">💾 Save config</button>
     <button id="btnOpenTriggerModal">🖱️ Trigger</button>
@@ -308,11 +333,6 @@
       </div>
 
       <button id="btnGetOrders" disabled>Orders chạy từ LNG Portal</button>
-
-      <div style="height:8px;"></div>
-      <label for="reimportOrderId">Re-import Etsy Order ID</label>
-      <input id="reimportOrderId" type="text" inputmode="numeric" placeholder="Re-import qua LNG Portal" disabled />
-      <button id="btnReimportOrder" class="secondary" disabled>Re-import qua LNG Portal</button>
 
   <div style="height:8px;"></div>
   <button id="btnSyncEtsyListings" class="secondary">Sync Etsy Listings</button>
