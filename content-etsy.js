@@ -100,6 +100,16 @@ if (!window.__LNG_ETSY_WORKER_INJECTED__) {
 
             return true;
         }
+        if (message.action === "CONTENT_ETSY_VERIFY_TRACKING") {
+            verifyTrackingOnEtsy(message.payload)
+                .then((data) => sendResponse({ ok: true, data }))
+                .catch((error) => sendResponse({
+                    ok: false,
+                    message: error.message || "Failed to verify Etsy tracking"
+                }));
+
+            return true;
+        }
         if (message.action === "CONTENT_ETSY_MESSAGE_SYNC_DEBUG") {
             syncEtsyMessagesDebug(message.payload || {})
                 .then((data) => {
@@ -3378,6 +3388,24 @@ function safeEmitEtsyAdsReconLog(tag, data = {}) {
             message: error?.message || String(error)
         });
     }
+
+    return { etsyStatus: "ETSY_ACCEPTED", acceptedAt: new Date().toISOString() };
+}
+
+async function verifyTrackingOnEtsy(payload = {}) {
+    const orderId = String(payload.orderId || "").trim();
+    const trackingNumber = String(payload.trackingNumber || "").trim();
+    if (!orderId || !trackingNumber) throw new Error("Missing Etsy tracking verification fields");
+
+    const response = await fetch(
+        `https://www.etsy.com/your/orders/sold?search_query=${encodeURIComponent(orderId)}`,
+        { credentials: "include" }
+    );
+    const page = await response.text();
+    if (!response.ok) throw new Error(`Etsy tracking verification failed ${response.status}`);
+    if (!page.includes(trackingNumber)) throw new Error("Etsy tracking is not visible on the order yet");
+
+    return { etsyStatus: "VERIFIED", verifiedAt: new Date().toISOString() };
 }
 
 function getEtsyAdsStatsObject(row = {}) {

@@ -3824,15 +3824,19 @@ async function runEtsyTrackingCommand({ commandId, items, renewLease }) {
     trackingCommandLocks.add(commandId);
 
     try {
-        return await runSerialTrackingBatch({
+        const result = await runSerialTrackingBatch({
             items: Array.isArray(items) ? items : [],
             beforeEach: renewLease,
-            upload: async (row) => handleUploadTrackingToEtsy({
-                orderId: row?.orderId,
-                trackingNumber: row?.trackingNumber,
-                carrier: row?.carrier || row?.carrierCode || row?.shippingCarrier
-            })
+            upload: async (row) => handleUploadTrackingToEtsy(row),
+            verify: async (row) => verifyTrackingOnEtsy(row)
         });
+        const verifiedCount = result.results.filter((row) => row.etsyStatus === "VERIFIED").length;
+        return {
+            ...result,
+            success: verifiedCount === result.results.length,
+            importedCount: verifiedCount,
+            failedCount: result.results.length - verifiedCount
+        };
     } finally {
         trackingCommandLocks.delete(commandId);
     }
@@ -3888,6 +3892,23 @@ async function handleUploadTrackingToEtsy(payload) {
         throw new Error(contentResponse?.message || "Content upload tracking failed");
     }
 
+    return contentResponse.data;
+}
+
+async function verifyTrackingOnEtsy(payload) {
+    const tabLease = await ensureEtsySoldOrdersTab();
+    const tab = tabLease.tab;
+    await injectContentScript(tab.id);
+    const contentResponse = await chrome.tabs.sendMessage(tab.id, {
+        action: "CONTENT_ETSY_VERIFY_TRACKING",
+        payload: {
+            orderId: normalizeEtsyOrderId(payload.orderId),
+            trackingNumber: String(payload.trackingNumber || "").trim()
+        }
+    });
+    if (!contentResponse?.ok) {
+        throw new Error(contentResponse?.message || "Etsy tracking verification failed");
+    }
     await closeTaskCreatedEtsyTab(tab, tabLease.createdByTask);
     return contentResponse.data;
 }

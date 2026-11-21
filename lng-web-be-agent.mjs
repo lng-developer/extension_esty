@@ -1,11 +1,11 @@
-function completionPayload(leaseToken, result) {
+function completionPayload(leaseToken, commandType, result) {
   return {
     leaseToken,
     success: result.success !== false,
     importJobId: result.importJobId || null,
     importedCount: Number(result.importedCount || 0),
     failedCount: Number(result.failedCount || 0),
-    ...(Array.isArray(result.results) ? { results: result.results } : {}),
+    ...(commandType === "UPLOAD_TRACKING" && Array.isArray(result.results) ? { trackingResults: result.results } : {}),
   };
 }
 
@@ -46,7 +46,7 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
         ? () => client.renew(claim.command.id, claim.leaseToken)
         : null,
     });
-    await client.complete(claim.command.id, completionPayload(claim.leaseToken, result));
+    await client.complete(claim.command.id, completionPayload(claim.leaseToken, claim.command.type, result));
     return { ok: true, command: claim.command, result };
   } catch (error) {
     if (isRetryableError?.(error)) throw error;

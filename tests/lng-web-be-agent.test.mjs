@@ -48,7 +48,7 @@ test("starts, executes and completes a tracking batch command once", async () =>
   assert.deepEqual(calls, [
     "heartbeat",
     ["start", "507f1f77bcf86cd799439012", "lease-token-1234567890"],
-    ["complete", "507f1f77bcf86cd799439012", { leaseToken: "lease-token-1234567890", success: true, importJobId: null, importedCount: 1, failedCount: 0, results: [{ orderId: "4213186862", ok: true }] }],
+    ["complete", "507f1f77bcf86cd799439012", { leaseToken: "lease-token-1234567890", success: true, importJobId: null, importedCount: 1, failedCount: 0, trackingResults: [{ orderId: "4213186862", ok: true }] }],
   ]);
 });
 
