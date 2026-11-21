@@ -9,6 +9,7 @@ import { distributeCustomFilesByItem } from "./etsy-custom-file-mapping.mjs";
 import { createLngWebBeCommandClient } from "./lng-web-be-command-client.mjs";
 import { executeNextLngWebBeCommand } from "./lng-web-be-agent.mjs";
 import { runSerialTrackingBatch } from "./etsy-tracking-command.mjs";
+import { verifyTrackingWithRetry } from "./etsy-tracking-verification.mjs";
 import { toEtsyAdsCsv, toEtsySoldOrderItemsCsv } from "./lng-web-be-import-csv.mjs";
 import { waitForEtsyImport, resumeEtsyImport, originalEtsyFileUrl } from "./etsy-import-runner.mjs";
 import { createEtsyCapture, runRemoteEtsyOrders } from './etsy-remote-order-runner.mjs';
@@ -3836,7 +3837,10 @@ async function runEtsyTrackingCommand({ commandId, items, renewLease }) {
             items: Array.isArray(items) ? items : [],
             beforeEach: renewLease,
             upload: async (row) => handleUploadTrackingToEtsy(row),
-            verify: async (row) => verifyTrackingOnEtsy(row)
+            verify: async (row) => verifyTrackingWithRetry(
+                () => verifyTrackingOnEtsy(row),
+                { delay: () => sleep(15_000) },
+            )
         });
         const verifiedCount = result.results.filter((row) => row.etsyStatus === "VERIFIED").length;
         const commandResult = {
