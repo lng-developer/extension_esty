@@ -77,6 +77,21 @@ test("returns null when claim has no queued command", async () => {
   assert.equal(await client.claimNext(), null);
 });
 
+test("bounds completion requests so a stalled backend can be retried", async () => {
+  let signal;
+  const client = createLngWebBeCommandClient({
+    fetchImpl: async (_url, options) => {
+      signal = options.signal;
+      return { ok: true, status: 200, json: async () => ({ success: true, data: { id: "command-1" } }) };
+    },
+    getConfig: async () => ({ apiBaseUrl: "https://api.example.test", extensionToken: "lng_ext_valid", clientId: "device-1", label: "Etsy worker" }),
+  });
+
+  await client.complete("command-1", { leaseToken: "x".repeat(24), success: true });
+
+  assert.ok(signal instanceof AbortSignal);
+});
+
 test("uploads a CSV with bearer authentication and the command idempotency key", async () => {
   const calls = [];
   const client = createLngWebBeCommandClient({

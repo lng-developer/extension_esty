@@ -95,7 +95,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/renew`, await agentBody({ leaseToken, ...(importJobId ? { importJobId } : {}) }), 'POST', COMMAND_ROOT, 5000);
     },
     async complete(commandId, payload) {
-      return request(`/agent/commands/${encodeURIComponent(commandId)}/complete`, await agentBody(payload));
+      return request(`/agent/commands/${encodeURIComponent(commandId)}/complete`, await agentBody(payload), 'POST', COMMAND_ROOT, 10000);
     },
     uploadCsv,
     getIdentity() {
