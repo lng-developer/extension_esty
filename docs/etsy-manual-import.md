@@ -4,6 +4,8 @@
 
 Reload the unpacked extension and reopen its order screen. Under **Tải JSON gốc Etsy**, enter an exact Etsy order ID and click **Tải JSON gốc**. Only an Etsy seller login is needed; no LNG token is required for this action.
 
+In **Etsy Operations Hub → Orders**, use the **Etsy Order ID** input in the **Re-import 1 đơn Etsy** card, then click **Tải JSON gốc** beside **Re-import đơn này**. This downloads JSON only; it does not trigger re-import.
+
 The downloaded `etsy-raw-<orderId>.json` contains capture metadata and the unchanged parsed Etsy orders API response in `response`. This is the mission-control list/search response, not a DOM scrape or an order-detail response. Unknown fields and recipient phone are preserved. The action does not map orders, generate CSV, upload data, or overwrite import checkpoints. If the order is not found, it reports an error instead of exporting another order.
 
 The file contains customer data. Keep it local or share only with authorized reviewers. The export path does not log response bodies or include request cookies/headers. Browser download behavior and live Etsy response shape still require a manual smoke check; automated tests use synthetic responses.

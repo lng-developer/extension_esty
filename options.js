@@ -267,6 +267,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  $('#btnRawOrderJson').addEventListener('click', async () => {
+    const targetOrderId = $('#reimportOrderId').value.trim();
+    if (!/^\d{1,30}$/.test(targetOrderId)) return alert('Etsy Order ID phải là chuỗi số hợp lệ');
+    const button = $('#btnRawOrderJson');
+    button.disabled = true;
+    log(`Đang đọc JSON gốc đơn ${targetOrderId} từ Etsy…`);
+    try {
+      const response = await chrome.runtime.sendMessage({ action: 'ETSY_MANUAL_RAW_JSON', payload: { targetOrderId } });
+      if (!response?.ok) throw new Error(response?.message || 'Không đọc được JSON Etsy');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `etsy-raw-${targetOrderId}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      log(`Đã tạo file JSON đơn ${targetOrderId}. Kiểm tra Downloads. Chưa import lên LNG.`);
+    } catch (error) {
+      log(`Lỗi tải JSON: ${error.message}`);
+      alert(`Lỗi tải JSON: ${error.message}`);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   $('#btnReimportOrder').addEventListener('click', async () => {
     const orderId = $('#reimportOrderId').value.trim();
     if (!/^\d+$/.test(orderId)) {
