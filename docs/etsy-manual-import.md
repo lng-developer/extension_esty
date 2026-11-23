@@ -29,6 +29,9 @@ Use a separate unpacked-extension Chrome profile. Do not replace the installed l
 
 ## Acceptance checks
 
+- Recipient phone, buyer email and buyer ID pass through optional `Ship Phone`, `Buyer Email`, and `LNG Buyer ID` CSV columns. Deploy the compatible backend mapper before re-importing with this extension. Phone comes from `fulfillment.to_address.phone`, not the suggested/verified address, which may omit it.
+- Etsy variations explicitly typed `Etsy_Order_Transaction_Variation_Personalization` also populate the Personalization column. Standard size/color options alone do not trigger customization. All variation labels and values remain available for display.
+
 - Address, quantity, unit price, variations and multiline personalization match Etsy. Tax/shipping are carried once per order, not duplicated across rows.
 - Exact Etsy Listing ID wins over SKU; absent identity produces DRAFT, not auto-approved readiness. Variant/PSD/vendor gates remain unchanged.
 - Image-only item stays blocked until its expected files arrive. A missing or ambiguous multi-item DOM association remains NEEDS_REVIEW; do not guess by array position.

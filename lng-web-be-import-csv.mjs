@@ -17,6 +17,7 @@ const ORDER_HEADERS = [
   "LNG Listing Image", "LNG Listing Thumbnail",
   "LNG Etsy Status", "LNG Payment Status", "LNG Ship By", "LNG Shipping Service",
   "LNG Order Discount", "LNG Shipping Discount", "LNG Order Total",
+  "Ship Phone", "Buyer Email", "LNG Buyer ID",
 ];
 
 export function toEtsySoldOrderItemsCsv(orders = []) {
@@ -67,6 +68,9 @@ export function toEtsySoldOrderItemsCsv(orders = []) {
     index === 0 ? order.totals?.discountAmount : '',
     index === 0 ? order.totals?.shippingDiscount : '',
     index === 0 ? order.totals?.orderTotal : '',
+    shipping.phone ?? order.phoneNumber,
+    order.buyer?.email,
+    order.buyer?.userId,
   ]; }));
   return csv(ORDER_HEADERS, rows);
 }

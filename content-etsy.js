@@ -2810,6 +2810,11 @@ function mapTransaction({ transaction, order }) {
         properties: JSON.stringify(variationsArr),
         variationsArray: variationsArr,
         variationsObject: variationsArrayToObject(variationsArr),
+        personalization: normalizeVariations(toArray(transaction.variations)
+            .filter(variation => variation?.type === 'Etsy_Order_Transaction_Variation_Personalization'))
+            .filter(variation => variation.formatted_value)
+            .map(variation => `${variation.formatted_name || 'Personalization'}: ${variation.formatted_value}`)
+            .join('\n') || undefined,
         customizations,
         customFiles: [],
         rawTransaction: transaction,
@@ -2930,6 +2935,7 @@ function toBackendOrder(o, ctx) {
 
         buyer: {
             userId: o.buyerUserId || "",
+            email: o.buyerEmail || "",
             fullName: o.buyerName || "",
             firstName: o.buyerFirstName || "",
             lastName: o.buyerLastName || "",
@@ -2948,6 +2954,7 @@ function toBackendOrder(o, ctx) {
 
         shipping: {
             name: o.buyerName || "",
+            phone: o.phoneNumber || "",
             address1: o.address || "",
             address2: o.address2 || "",
             city: o.city || "",
@@ -3020,6 +3027,7 @@ function toBackendItem(it) {
 
         variationsRaw: it.properties || "",
         variations: it.variationsObject || {},
+        personalization: it.personalization,
         cost_breakdown: it.cost_breakdown || null,
         customizations: it.customizations || {
             textFields: [],
