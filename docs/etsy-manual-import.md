@@ -1,5 +1,13 @@
 # Test Etsy manual import
 
+## Export raw Etsy JSON before mapping
+
+Reload the unpacked extension and reopen its order screen. Under **Tải JSON gốc Etsy**, enter an exact Etsy order ID and click **Tải JSON gốc**. Only an Etsy seller login is needed; no LNG token is required for this action.
+
+The downloaded `etsy-raw-<orderId>.json` contains capture metadata and the unchanged parsed Etsy orders API response in `response`. This is the mission-control list/search response, not a DOM scrape or an order-detail response. Unknown fields and recipient phone are preserved. The action does not map orders, generate CSV, upload data, or overwrite import checkpoints. If the order is not found, it reports an error instead of exporting another order.
+
+The file contains customer data. Keep it local or share only with authorized reviewers. The export path does not log response bodies or include request cookies/headers. Browser download behavior and live Etsy response shape still require a manual smoke check; automated tests use synthetic responses.
+
 ## Web-requested Orders
 
 With BE protocol v1, configured manual mode also accepts **WEB Orders** from Integrations → Extensions → Automation. It advertises ETSY/protocolVersion 1 and only claims after backend acknowledgement. Select maximum 1 for the first explicit test; Orders auto-import with files/manifest, no manual confirmation required. Amazon day windows, Etsy schedules, Ads and tracking are not enabled by this workflow.

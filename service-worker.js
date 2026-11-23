@@ -109,6 +109,24 @@ async function handleManualMessage(action, payload) {
     if (action === 'ETSY_MANUAL_STATUS') return run || null;
     if (etsyManualRunning || lngWebBeAgentRunning || (await chrome.storage.session.get('etsyRemoteOrderLease')).etsyRemoteOrderLease) throw new Error('Import đang chạy');
     if (action === 'ETSY_MANUAL_CLEAR') { await chrome.storage.local.remove('etsyManualRun'); return null; }
+    if (action === 'ETSY_MANUAL_RAW_JSON') {
+        const targetOrderId = String(payload.targetOrderId || '').trim();
+        if (!/^\d{1,30}$/.test(targetOrderId)) throw new Error('Nhập mã đơn Etsy hợp lệ (chỉ gồm chữ số).');
+        etsyManualRunning = true;
+        let tabLease;
+        try {
+            tabLease = await ensureEtsySoldOrdersTab();
+            await injectContentScript(tabLease.tab.id);
+            const response = await chrome.tabs.sendMessage(tabLease.tab.id, {
+                action: 'CONTENT_ETSY_GET_RAW_ORDER', payload: { targetOrderId },
+            });
+            if (!response?.ok) throw new Error(response?.message || 'Không đọc được JSON Etsy.');
+            return response.data;
+        } finally {
+            if (tabLease) await closeTaskCreatedEtsyTab(tabLease.tab, tabLease.createdByTask);
+            etsyManualRunning = false;
+        }
+    }
     if (!await isEtsyManualMode()) throw new Error('Lưu cấu hình chế độ thủ công trước');
     const config = await manualConfig();
     if (etsyManualRunning) throw new Error('Import đang chạy');

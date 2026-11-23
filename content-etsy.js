@@ -6,6 +6,12 @@ if (!window.__LNG_ETSY_WORKER_INJECTED__) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log("[LNG][content] onMessage", { action: message?.action });
 
+        if (message.action === "CONTENT_ETSY_GET_RAW_ORDER") {
+            getEtsyRawOrderJson(message.payload)
+                .then(data => sendResponse({ ok: true, data }))
+                .catch(error => sendResponse({ ok: false, message: error.message }));
+            return true;
+        }
         if (message.action === "CONTENT_ETSY_GET_ORDERS") {
             getEtsyOrders(message.payload)
                 .then((data) => {
@@ -166,6 +172,28 @@ function logSkuDebugStage(stage, payload = {}) {
             message: error?.message || String(error)
         });
     }
+}
+
+async function getEtsyRawOrderJson(payload = {}) {
+    const targetOrderId = String(payload.targetOrderId || '').trim();
+    if (!/^\d{1,30}$/.test(targetOrderId)) throw new Error('Nhập mã đơn Etsy hợp lệ (chỉ gồm chữ số).');
+    const bootstrap = parseEtsyBootstrap(await fetchText('https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav'));
+    if (!bootstrap.shopId || !bootstrap.orderStates?.length) throw new Error('Không tìm thấy shop Etsy. Kiểm tra đăng nhập seller.');
+    for (const state of bootstrap.orderStates) {
+        const response = await fetchOrdersPage({ shopId: bootstrap.shopId, orderStateId: state.order_state_id, limit: 1, offset: 0, targetOrderId, rawOnly: true });
+        if ((response.order_ids || []).some(id => String(id) === targetOrderId)) {
+            return {
+                capturedAt: new Date().toISOString(),
+                shopId: String(bootstrap.shopId),
+                shopName: bootstrap.shopName,
+                targetOrderId,
+                orderStateId: state.order_state_id,
+                source: 'etsy-mission-control-orders',
+                response,
+            };
+        }
+    }
+    throw new Error('Không tìm thấy mã đơn trong shop Etsy đang đăng nhập.');
 }
 
 async function getEtsyOrders(payload = {}) {
@@ -736,7 +764,7 @@ async function fetchText(url) {
     return await response.text();
 }
 
-async function fetchJson(url, { signal } = {}) {
+async function fetchJson(url, { signal, logPreview = true } = {}) {
     const response = await fetch(url, {
         signal,
         method: "GET",
@@ -753,17 +781,17 @@ async function fetchJson(url, { signal } = {}) {
         status: response.status,
         ok: response.ok,
         contentType,
-        preview: safeJsonPreview(text, 500)
+        ...(logPreview ? { preview: safeJsonPreview(text, 500) } : {})
     });
 
     if (!response.ok) {
-        throw new Error(`Fetch JSON failed ${response.status}: ${maskUrlForLog(url)} :: ${safeJsonPreview(text, 300)}`);
+        throw new Error(`Fetch JSON failed ${response.status}: ${maskUrlForLog(url)}${logPreview ? ` :: ${safeJsonPreview(text, 300)}` : ''}`);
     }
 
     try {
         return JSON.parse(text || "{}");
     } catch (error) {
-        throw new Error(`Fetch JSON parse failed: ${maskUrlForLog(url)} :: ${safeJsonPreview(text, 500)}`);
+        throw new Error(`Fetch JSON parse failed: ${maskUrlForLog(url)}${logPreview ? ` :: ${safeJsonPreview(text, 500)}` : ''}`);
     }
 }
 
@@ -1554,7 +1582,7 @@ async function collectOrdersByState({ shopId, orderStateId, orderStateName, limi
     return merged;
 }
 
-async function fetchOrdersPage({ shopId, orderStateId, limit, offset, targetOrderId = "" }) {
+async function fetchOrdersPage({ shopId, orderStateId, limit, offset, targetOrderId = "", rawOnly = false }) {
     const url = new URL(
         `https://www.etsy.com/api/v3/ajax/bespoke/shop/${shopId}/mission-control/orders`
     );
@@ -1591,8 +1619,8 @@ async function fetchOrdersPage({ shopId, orderStateId, limit, offset, targetOrde
         offset,
         targetOrderId
     });
-    const data = await fetchJson(url.toString());
-    logApiShapeOnce(data);
+    const data = await fetchJson(url.toString(), rawOnly ? { logPreview: false, signal: AbortSignal.timeout(30000) } : {});
+    if (!rawOnly) logApiShapeOnce(data);
     return data;
 }
 

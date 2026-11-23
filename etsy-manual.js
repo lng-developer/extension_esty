@@ -10,6 +10,7 @@ async function send(action, payload = {}) {
 let statementCsvContent = null;
 let statementFilename = null;
 function controls() {
+  $('rawJson').disabled = busy;
   $('pull').disabled = Boolean(busy || !savedConfig || (currentRun && !['PREVIEW', 'COMPLETED'].includes(currentRun.status)));
   $('import').disabled = busy || !savedConfig || !currentRun?.orderCount || currentRun.status === 'COMPLETED';
   $('clear').disabled = busy || !currentRun;
@@ -57,6 +58,22 @@ $('config').onsubmit = (event) => {
     render(currentRun);
   });
 };
+$('rawJson').onclick = () => act(async () => {
+  const targetOrderId = $('rawOrderId').value.trim();
+  if (!/^\d{1,30}$/.test(targetOrderId)) throw new Error('Nhập mã đơn Etsy hợp lệ (chỉ gồm chữ số).');
+  $('status').textContent = 'Đang đọc JSON gốc từ Etsy…';
+  const data = await send('ETSY_MANUAL_RAW_JSON', { targetOrderId });
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `etsy-raw-${targetOrderId}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  $('status').dataset.error = 'false';
+  $('status').textContent = `Đã tạo file JSON cho đơn ${targetOrderId}. Kiểm tra mục tải xuống của Chrome. Chưa import lên LNG.`;
+});
 $('pull').onclick = () => act(async () => {
   const limit = Number($('limit').value);
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Số đơn phải từ 1 đến 200.');
