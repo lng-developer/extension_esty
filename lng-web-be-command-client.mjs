@@ -28,7 +28,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig, logg
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
-      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      signal: AbortSignal.timeout(timeoutMs || 30000),
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload?.success) {
@@ -88,6 +88,13 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig, logg
     async claimNext() {
       return request("/agent/claim", await agentBody());
     },
+    async listCommands() {
+      const body = await agentBody();
+      const query = new URLSearchParams({ clientId: body.clientId, label: body.label });
+      const result = await request(`/agent/commands?${query}`, undefined, 'GET');
+      if (!Array.isArray(result?.items)) throw error('Invalid command history', 'COMMAND_HISTORY_INVALID');
+      return result.items;
+    },
     async start(commandId, leaseToken) {
       return request(`/agent/commands/${encodeURIComponent(commandId)}/start`, await agentBody({ leaseToken }));
     },
@@ -124,7 +131,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig, logg
     } catch { /* Diagnostics must not interrupt a command. */ }
   };
   client.logProgress = (stage, message, extra = {}) => emit(stage, message, extra);
-  for (const method of ['heartbeat', 'claimNext', 'start', 'renew', 'complete', 'uploadCsv', 'getImportProgress', 'uploadImportAsset', 'attachManifest']) {
+  for (const method of ['heartbeat', 'claimNext', 'listCommands', 'start', 'renew', 'complete', 'uploadCsv', 'getImportProgress', 'uploadImportAsset', 'attachManifest']) {
     const original = client[method];
     client[method] = async (...args) => {
       if (['start', 'renew', 'complete'].includes(method)) command = { ...command, id: args[0] };

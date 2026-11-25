@@ -326,11 +326,38 @@ async function runLngWebBeAgentOnce() {
 
 async function runRemoteEtsyWorker(client) {
     const saved = await chrome.storage.local.get(['etsyManualRun', 'etsyRemoteOrderRun']);
-    if (etsyManualRunning || (saved.etsyManualRun && saved.etsyManualRun.status !== 'COMPLETED') || trackingCommandLocks.size) return { ok: true, skipped: true, reason: 'MANUAL_BUSY' };
+    const blocked = async reason => {
+        const messages = {
+            MANUAL_BUSY: 'A manual import or tracking task is still running.',
+            MANUAL_CHECKPOINT_PENDING: 'A manual preview/import needs Resume or Clear in Orders before remote tasks can start.',
+            REMOTE_SCOPE_CHANGED: 'Saved task belongs to another backend/shop; restore its configuration before recovery.',
+            REMOTE_COMMAND_NOT_FOUND: 'Previous task was not found in backend history; checkpoint retained for review.',
+            REMOTE_INTERRUPTED: 'Previous task is not finished but its local lease is missing; waiting for backend reconciliation.',
+        };
+        await client.logProgress('CLAIM_BLOCKED', messages[reason] || reason, { activityStatus: 'RETRYING', reason });
+        return { ok: false, skipped: true, reason };
+    };
+    if (etsyManualRunning || trackingCommandLocks.size) return blocked('MANUAL_BUSY');
+    if (saved.etsyManualRun && !['COMPLETED', 'NEEDS_REVIEW'].includes(saved.etsyManualRun.status)) return blocked('MANUAL_CHECKPOINT_PENDING');
     const config = await manualConfig();
     const scope = manualScope(config);
     let { etsyRemoteOrderLease: lease } = await chrome.storage.session.get('etsyRemoteOrderLease');
-    if (!lease && saved.etsyRemoteOrderRun && !saved.etsyRemoteOrderRun.acknowledged) return { ok: false, skipped: true, reason: 'REMOTE_INTERRUPTED' };
+    const checkpoint = lease || (!saved.etsyRemoteOrderRun?.acknowledged && saved.etsyRemoteOrderRun);
+    if (checkpoint) {
+        if (checkpoint.scope !== scope) return blocked('REMOTE_SCOPE_CHANGED');
+        const id = lease?.command?.id || checkpoint.id;
+        client.setCommandContext({ id, type: lease?.command?.type || 'IMPORT_NEW_ORDERS' });
+        const previous = (await client.listCommands()).find(command => command.id === id);
+        if (!previous) return blocked('REMOTE_COMMAND_NOT_FOUND');
+        if (['SUCCEEDED', 'FAILED', 'CANCELLED', 'CANCELED', 'PARTIAL_FAILED'].includes(previous.status)) {
+            if (saved.etsyRemoteOrderRun?.id === id) {
+                await chrome.storage.local.set({ etsyRemoteOrderRun: { ...saved.etsyRemoteOrderRun, acknowledged: true } });
+            }
+            await chrome.storage.session.remove('etsyRemoteOrderLease');
+            lease = null;
+            await client.logProgress('STALE_LOCK_RECOVERED', 'Backend confirmed previous command finished; polling resumed', { backendStatus: previous.status, activityStatus: previous.status, backendConfirmed: true });
+        } else if (!lease) return blocked('REMOTE_INTERRUPTED');
+    }
     if (!lease) {
         const claim = await client.claimNext();
         if (!claim) return { ok: true, idle: true };

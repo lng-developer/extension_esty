@@ -8,7 +8,7 @@ import { executeNextLngWebBeCommand } from '../lng-web-be-agent.mjs';
 import { runRemoteEtsyOrders } from '../etsy-remote-order-runner.mjs';
 
 const source = readFileSync(new URL('../service-worker.js', import.meta.url), 'utf8');
-function setup({ manual = true, token = 'lng_ext_session', status = 200, acknowledged = false, command = null, loseCompletion = false, collectionError = null } = {}) {
+function setup({ manual = true, token = 'lng_ext_session', status = 200, acknowledged = false, command = null, loseCompletion = false, collectionError = null, history = null, historyStatus = 200 } = {}) {
   const local = { etsyManualMode: manual, lngWebBeClientId: 'stable-client', extensionToken: 'lng_ext_old', lngWebBeApiBaseUrl: 'https://old.example', socketLabel: 'Etsy VM' };
   const session = { etsyManualConfig: { apiBaseUrl: 'http://192.168.1.3:3000', extensionToken: token } };
   const requests = []; const alarms = new Map(); let onAlarm;
@@ -22,6 +22,10 @@ function setup({ manual = true, token = 'lng_ext_session', status = 200, acknowl
     createLngWebBeCommandClient: options => createLngWebBeCommandClient({ ...options, fetchImpl: async (url, options) => {
       requests.push({ url, ...options });
       let data = acknowledged ? { provider: 'ETSY', protocolVersion: 1 } : {};
+      if (url.includes('/agent/commands?')) {
+        if (historyStatus !== 200) return { ok: false, status: historyStatus, json: async () => ({ success: false }) };
+        data = { items: history || (command ? [{ ...command, status: completed ? 'SUCCEEDED' : 'RUNNING' }] : []) };
+      }
       if (url.endsWith('/claim')) data = command && !completed ? { command: { ...command, status: 'CLAIMED' }, leaseToken: 'x'.repeat(24) } : null;
       if (url.endsWith('/renew') || url.endsWith('/start')) data = { ...command, status: 'RUNNING' };
       if (url.endsWith('/etsy-sold-order-items')) data = { id: 'job' };
@@ -102,7 +106,7 @@ test('worker imports one web order and retries lost completion without collectin
   assert.equal(app.collections(), 1);
   assert.equal(app.local.etsyRemoteOrderRun.acknowledged, true);
   assert.equal(app.session.etsyRemoteOrderLease, undefined);
-  assert.equal(app.requests.filter(req => req.url.endsWith('/complete')).length, 2);
+  assert.equal(app.requests.filter(req => req.url.endsWith('/complete')).length, 1);
 });
 test('fatal collection errors fail task with a fixed message, not customer data', async () => {
   const app = setup({ acknowledged: true, collectionError: new Error('private customer URL'), command: { id: 'task', provider: 'ETSY', type: 'IMPORT_NEW_ORDERS', origin: 'WEB', maxOrders: 1 } });
@@ -122,4 +126,51 @@ test('remote worker logs collection, import and completion retries under one com
   assert.equal(runs.length, 1);
   assert.equal(runs[0].status, 'SUCCEEDED');
   assert.ok(runs[0].events.some(e => e.context.activityStatus === 'RETRYING'));
+});
+test('lost session lease is released only after backend confirms terminal command', async () => {
+  const app = setup({ acknowledged: true, history: [{ id: 'old', status: 'FAILED' }] });
+  app.local.etsyRemoteOrderRun = { id: 'old', scope: 'http://192.168.1.3:3000|shop', status: 'IMPORTING', csv: 'keep' };
+  await app.ctx.startLngWebBeAgent();
+  assert.equal(app.local.etsyRemoteOrderRun.acknowledged, true);
+  assert.equal(app.local.etsyRemoteOrderRun.csv, 'keep');
+  assert.ok(app.requests.some(r => r.url.endsWith('/claim')));
+  assert.ok(app.local.extensionLogs.some(e => e.context.stage === 'STALE_LOCK_RECOVERED'));
+});
+
+for (const history of [[], [{ id: 'old', status: 'RUNNING' }]]) {
+  test('unknown or active previous command retains checkpoint and blocks claim', async () => {
+    const app = setup({ acknowledged: true, history });
+    app.local.etsyRemoteOrderRun = { id: 'old', scope: 'http://192.168.1.3:3000|shop', status: 'IMPORTING' };
+    await app.ctx.startLngWebBeAgent();
+    assert.ok(!app.requests.some(r => r.url.endsWith('/claim')));
+    assert.notEqual(app.local.etsyRemoteOrderRun.acknowledged, true);
+    assert.ok(app.local.extensionLogs.some(e => e.context.stage === 'CLAIM_BLOCKED'));
+  });
+}
+
+test('history network failure never clears ownership or claims another task', async () => {
+  const app = setup({ acknowledged: true, historyStatus: 503 });
+  app.local.etsyRemoteOrderRun = { id: 'old', scope: 'http://192.168.1.3:3000|shop' };
+  await app.ctx.startLngWebBeAgent();
+  assert.notEqual(app.local.etsyRemoteOrderRun.acknowledged, true);
+  assert.ok(!app.requests.some(r => r.url.endsWith('/claim')));
+});
+
+test('saved terminal lease is cleared and failed manual result does not block polling', async () => {
+  const app = setup({ acknowledged: true, history: [{ id: 'old', status: 'FAILED' }] });
+  app.session.etsyRemoteOrderLease = { command: { id: 'old', type: 'IMPORT_NEW_ORDERS' }, scope: 'http://192.168.1.3:3000|shop', leaseToken: 'keep-private' };
+  app.local.etsyManualRun = { status: 'NEEDS_REVIEW', csv: 'keep' };
+  await app.ctx.startLngWebBeAgent();
+  assert.equal(app.session.etsyRemoteOrderLease, undefined);
+  assert.equal(app.local.etsyManualRun.csv, 'keep');
+  assert.ok(app.requests.some(r => r.url.endsWith('/claim')));
+  assert.ok(!JSON.stringify(app.local.extensionLogs).includes('keep-private'));
+});
+
+test('scope mismatch never reconciles or claims under a different shop', async () => {
+  const app = setup({ acknowledged: true, history: [{ id: 'old', status: 'FAILED' }] });
+  app.local.etsyRemoteOrderRun = { id: 'old', scope: 'other-shop' };
+  await app.ctx.startLngWebBeAgent();
+  assert.equal(app.requests.length, 1);
+  assert.ok(app.local.extensionLogs.some(e => e.context.reason === 'REMOTE_SCOPE_CHANGED'));
 });
