@@ -244,7 +244,7 @@ async function getLngWebBeAgentConfig() {
 
 async function runLngWebBeAgentOnce() {
     if (lngWebBeAgentRunning) return { ok: false, skipped: true, reason: "AGENT_RUNNING" };
-    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig, logger: extensionLogger });
     if (!await client.isConfigured()) return { ok: false, skipped: true, reason: "NOT_CONFIGURED" };
 
     lngWebBeAgentRunning = true;
@@ -277,6 +277,7 @@ async function runLngWebBeAgentOnce() {
             },
             isRetryableError: (error) => !Number.isInteger(Number(error?.status)) || Number(error.status) >= 500,
             executeOrders: async ({ commandId, numDays }) => {
+                await client.logProgress('COLLECTING_ORDERS', 'Collecting orders from Etsy', { activityStatus: 'RUNNING' });
                 const data = await handleGetEtsyOrdersAndPush({
                     taskId: commandId,
                     taskType: "IMPORT_NEW_ORDERS",
@@ -295,6 +296,7 @@ async function runLngWebBeAgentOnce() {
                 return waitForEtsyImport(client, data.push?.importJobId);
             },
             executeAds: async ({ commandId, dateFrom, dateTo }) => {
+                await client.logProgress('COLLECTING_ADS', 'Collecting Etsy ads', { dateFrom, dateTo, activityStatus: 'RUNNING' });
                 if (!dateFrom || dateFrom !== dateTo) throw new Error("Ads commands must contain exactly one date");
                 const data = await handleEtsyAdsImportDay({
                     date: dateFrom,
@@ -336,6 +338,7 @@ async function runRemoteEtsyWorker(client) {
         await chrome.storage.session.set({ etsyRemoteOrderLease: lease });
     }
     if (lease.scope !== scope) throw new Error('REMOTE_SCOPE_CHANGED');
+    client.setCommandContext(lease.command);
     const acknowledgeCompletion = async () => {
         await client.complete(lease.command.id, { leaseToken: lease.leaseToken, ...lease.completion });
         const { etsyRemoteOrderRun: run } = await chrome.storage.local.get('etsyRemoteOrderRun');
@@ -397,6 +400,7 @@ async function runRemoteEtsyWorker(client) {
         return await acknowledgeCompletion();
     } catch (error) {
         if (!lease.completion && !lost && error.code !== 'IMPORT_PENDING' && error.name !== 'TypeError' && !(error.status >= 500)) {
+            await client.logProgress('EXECUTION_FAILED', 'Command execution failed before completion', { activityStatus: 'FAILED', errorType: error.name, errorCode: /^[A-Z0-9_]{1,80}$/.test(error.message || '') ? error.message : null });
             const { etsyRemoteOrderRun: run } = await chrome.storage.local.get('etsyRemoteOrderRun');
             await assertLease(run?.jobId, true);
             lease.completion = { success: false, ...(run?.jobId ? { importJobId: run.jobId } : {}), importedCount: run?.result?.importedCount || 0, failedCount: run?.result?.failedCount || 0, errorMessage: 'ETSY_REMOTE_IMPORT_FAILED' };
@@ -404,12 +408,13 @@ async function runRemoteEtsyWorker(client) {
             return await acknowledgeCompletion();
         }
         // Keep exact CSV/job and session ownership for an alarm-driven resume.
+        await client.logProgress('RESUME_PENDING', lost ? 'Command lease lost; execution stopped' : 'Waiting to retry or resume command', { activityStatus: lost ? 'LEASE_LOST' : 'RETRYING', importJobId: associatedJob });
         return { ok: false, reason: error.code === 'LEASE_LOST' ? 'REMOTE_LEASE_LOST' : 'REMOTE_IMPORT_PENDING' };
     } finally { clearInterval(timer); }
 }
 
 async function heartbeatOnly() {
-    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig, logger: extensionLogger });
     if (!await client.isConfigured()) {
         const status = { state: "NOT_CONFIGURED", lastHeartbeatAt: null, nextPollAt: null };
         await chrome.storage.local.set({ extensionConnectionStatus: status });
@@ -440,7 +445,7 @@ async function heartbeatOnly() {
 }
 
 async function startLngWebBeAgent() {
-    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig });
+    const client = createLngWebBeCommandClient({ getConfig: getLngWebBeAgentConfig, logger: extensionLogger });
     if (!await client.isConfigured()) {
         await chrome.alarms.clear(LNG_WEB_BE_COMMAND_ALARM);
         await chrome.storage.local.set({

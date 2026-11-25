@@ -131,6 +131,16 @@ async function renderLogs() {
     const meta = document.createElement('p');
     meta.textContent = `${formatVietnamTime(run.startedAt)}${run.commandId ? ` · ${run.commandId}` : ''}`;
     card.append(header, meta);
+    if (run.stage) {
+      const progress = document.createElement('p');
+      progress.textContent = `Bước gần nhất: ${run.stage} · ${formatVietnamTime(run.lastProgressAt)}`;
+      card.append(progress);
+    }
+    if (run.stale) {
+      const warning = document.createElement('p');
+      warning.textContent = 'Chưa có tiến độ mới trong 7 phút. Heartbeat không xác nhận task đang xử lý.';
+      card.append(warning);
+    }
 
     if (run.error) {
       const error = document.createElement('p');

@@ -21,16 +21,25 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
       : claim.command.type === "UPLOAD_TRACKING"
         ? executeTracking
       : null;
-  if (!executor) return { ok: false, skipped: true, reason: "UNSUPPORTED_COMMAND" };
+  if (!executor) {
+    await client.logProgress?.('UNSUPPORTED_COMMAND', 'This extension cannot execute the received command', { activityStatus: 'UNKNOWN' });
+    return { ok: false, skipped: true, reason: "UNSUPPORTED_COMMAND" };
+  }
   if (!/^[a-f0-9]{24}$/i.test(String(claim.command.id || ""))) {
+    await client.logProgress?.('INVALID_COMMAND_ID', 'Command identity is invalid', { activityStatus: 'UNKNOWN' });
     return { ok: false, skipped: true, reason: "INVALID_COMMAND_ID" };
   }
   if (String(claim.leaseToken).length < 20) {
+    await client.logProgress?.('INVALID_LEASE_TOKEN', 'Command lease is invalid', { activityStatus: 'UNKNOWN' });
     return { ok: false, skipped: true, reason: "INVALID_LEASE_TOKEN" };
   }
   const validationError = validateCommand?.(claim.command);
-  if (validationError) return { ok: false, skipped: true, reason: validationError };
+  if (validationError) {
+    await client.logProgress?.('VALIDATION_FAILED', 'Command validation failed; execution not started', { activityStatus: 'UNKNOWN' });
+    return { ok: false, skipped: true, reason: validationError };
+  }
   if (claim.command.type === "UPLOAD_TRACKING" && (!Array.isArray(claim.command.items) || !claim.command.items.length)) {
+    await client.logProgress?.('VALIDATION_FAILED', 'Tracking command has no items', { activityStatus: 'UNKNOWN' });
     return { ok: false, skipped: true, reason: "Tracking commands must contain at least one item" };
   }
 
@@ -49,7 +58,9 @@ export async function executeNextLngWebBeCommand({ client, executeOrders, execut
     await client.complete(claim.command.id, completionPayload(claim.leaseToken, claim.command.type, result));
     return { ok: true, command: claim.command, result };
   } catch (error) {
-    if (isRetryableError?.(error)) throw error;
+    const retryable = isRetryableError?.(error);
+    await client.logProgress?.('EXECUTION_ERROR', 'Command execution interrupted', { activityStatus: retryable ? 'RETRYING' : 'FAILED', httpStatus: error.status || null });
+    if (retryable) throw error;
     await client.complete(claim.command.id, {
       leaseToken: claim.leaseToken,
       success: false,

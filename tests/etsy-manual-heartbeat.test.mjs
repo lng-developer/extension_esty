@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { createExtensionLogger, buildActivityRuns } from '../extensionLogger.mjs';
 import { readFileSync } from 'node:fs';
 import { createLngWebBeCommandClient } from '../lng-web-be-command-client.mjs';
 import { executeNextLngWebBeCommand } from '../lng-web-be-agent.mjs';
@@ -12,7 +13,7 @@ function setup({ manual = true, token = 'lng_ext_session', status = 200, acknowl
   const session = { etsyManualConfig: { apiBaseUrl: 'http://192.168.1.3:3000', extensionToken: token } };
   const requests = []; const alarms = new Map(); let onAlarm;
   let completed = false; let collections = 0;
-  const ctx = vm.createContext({ URL, Date, setInterval, clearInterval, runRemoteEtsyOrders, downloadManualFile: async () => {}, handleGetEtsyOrdersAndPush: async options => { collections++; if (collectionError) throw collectionError; assert.equal(options.maxTotalOrders, 1); await options.pushOrders([{ orderId: 'order', items: [{ transactionId: 'item', quantity: 1 }] }]); }, console: { error() {} }, crypto: { randomUUID: () => 'new-client' },
+  const ctx = vm.createContext({ extensionLogger: createExtensionLogger({storage:{get:async()=>local,set:async value=>Object.assign(local,value)}}), URL, Date, setInterval, clearInterval, runRemoteEtsyOrders, downloadManualFile: async () => {}, handleGetEtsyOrdersAndPush: async options => { collections++; if (collectionError) throw collectionError; assert.equal(options.maxTotalOrders, 1); await options.pushOrders([{ orderId: 'order', items: [{ transactionId: 'item', quantity: 1 }] }]); }, console: { error() {} }, crypto: { randomUUID: () => 'new-client' },
     LNG_WEB_BE_COMMAND_ALARM: 'commands', LNG_WEB_BE_CLIENT_ID_KEY: 'lngWebBeClientId', LNG_WEB_BE_AGENT_STATUS_KEY: 'agentStatus', lngWebBeAgentRunning: false, etsyManualRunning: false, trackingCommandLocks: new Set(), manualConfig: async () => session.etsyManualConfig, manualScope: cfg => `${cfg.apiBaseUrl}|shop`,
     isEtsyManualMode: async () => local.etsyManualMode,
     chrome: { runtime: { getManifest: () => ({ version: '1.1.0' }) }, storage: {
@@ -110,4 +111,15 @@ test('fatal collection errors fail task with a fixed message, not customer data'
   assert.ok(complete);
   assert.equal(JSON.parse(complete.body).success, false);
   assert.equal(JSON.parse(complete.body).errorMessage, 'ETSY_REMOTE_IMPORT_FAILED');
+});
+
+test('remote worker logs collection, import and completion retries under one command', async () => {
+  const app = setup({ acknowledged: true, loseCompletion: true, command: { id: 'task', provider: 'ETSY', type: 'IMPORT_NEW_ORDERS', origin: 'WEB', maxOrders: 1 } });
+  await app.ctx.startLngWebBeAgent();
+  assert.ok(app.local.extensionLogs.some(e => e.context.stage === 'COLLECTING_ORDERS'));
+  await app.tick();
+  const runs = buildActivityRuns(app.local.extensionLogs);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].status, 'SUCCEEDED');
+  assert.ok(runs[0].events.some(e => e.context.activityStatus === 'RETRYING'));
 });

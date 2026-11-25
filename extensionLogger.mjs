@@ -5,7 +5,10 @@ const SENSITIVE_KEY = /token|cookie|authorization|password|secret|header|body|em
 function redactText(value) {
   return String(value ?? '')
     .replace(/(Bearer\s+)[^\s]+/gi, '$1[REDACTED]')
-    .replace(/([?&](?:token|key|secret|password)=[^&\s]+)/gi, '$1[REDACTED]')
+    .replace(/https?:\/\/[^\s]+/gi, '[URL REDACTED]')
+    .replace(/([?&](?:token|key|secret|password)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/lng_ext_[^\s]+/g, '[TOKEN REDACTED]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[EMAIL REDACTED]')
     .slice(0, 500);
 }
 
@@ -27,6 +30,8 @@ const ACTIVITY_TYPES = {
   IMPORT_SETTLEMENTS: 'Settlements',
   UPLOAD_TRACKING: 'Upload Tracking',
   HEARTBEAT: 'Heartbeat',
+  CONNECTION: 'Backend connection',
+  COMMAND: 'Command',
 };
 
 function activityType(event) {
@@ -84,11 +89,18 @@ export function buildActivityRuns(events = [], { now = Date.now(), commands = []
     if (context.dateFrom) run.dateFrom = context.dateFrom;
     if (context.dateTo) run.dateTo = context.dateTo;
     run.events.push(event);
+    if (context.stage && context.stage !== 'LEASE_RENEWED') {
+      run.lastProgressAt = event.timestamp;
+      run.stage = context.stage;
+    }
 
-    if (context.activityStatus === 'FAILED' || event.level === 'error') {
+    if (context.activityStatus) {
+      run.status = context.activityStatus;
+      run.error = ['FAILED', 'PARTIAL_FAILED', 'RETRYING', 'LEASE_LOST'].includes(run.status) ? event.message : null;
+    } else if (event.level === 'error') {
       run.status = 'FAILED';
       run.error = event?.context?.errorMessage || event.message;
-    } else if (context.activityStatus === 'SUCCEEDED' || /hoàn thành|completed|success/i.test(event.message || '')) {
+    } else if (/hoàn thành|completed|success/i.test(event.message || '')) {
       run.status = 'SUCCEEDED';
       run.error = null;
     }
@@ -105,8 +117,9 @@ export function buildActivityRuns(events = [], { now = Date.now(), commands = []
     if (command) {
       run.status = ['SUCCEEDED', 'FAILED', 'QUEUED', 'CLAIMED', 'RUNNING'].includes(command.status) ? command.status : 'UNKNOWN';
       run.error = command.errorMessage || null;
-    } else if (run.status === 'RUNNING' && now - Date.parse(run.events.at(-1).timestamp) > 7 * 60_000) {
+    } else if (run.status === 'RUNNING' && now - Date.parse(run.lastProgressAt || run.events.at(-1).timestamp) > 7 * 60_000) {
       run.status = 'UNKNOWN';
+      run.stale = true;
     }
     return run;
   });
@@ -126,7 +139,7 @@ export function createExtensionLogger({ storage, maxEntries = 200 }) {
       const current = await storage.get(EXTENSION_LOG_STORAGE_KEY);
       const events = [...(current[EXTENSION_LOG_STORAGE_KEY] ?? []), event].slice(-maxEntries);
       await storage.set({ [EXTENSION_LOG_STORAGE_KEY]: events });
-    });
+    }).catch(() => {});
     return writeQueue;
   };
 

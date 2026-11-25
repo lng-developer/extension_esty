@@ -63,3 +63,14 @@ test('unresolved file manifest returns needs review rather than success', async 
   app.options.client.attachManifest = async () => ({ entries: [{ status: 'needs_review' }] });
   assert.equal((await runRemoteEtsyOrders(app.options)).errorMessage, 'ETSY_IMPORT_NEEDS_REVIEW');
 });
+
+test('collect stage is visible before a slow Etsy collection resolves', async () => {
+  const app = setup(); const stages = []; let finish;
+  app.options.client.logProgress = async (stage) => { stages.push(stage); };
+  app.options.collect = () => new Promise(resolve => { finish = resolve; });
+  const running = runRemoteEtsyOrders(app.options);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(stages.includes('COLLECTING_ORDERS'));
+  finish([]); await running;
+  assert.ok(stages.includes('ORDERS_COLLECTED'));
+});

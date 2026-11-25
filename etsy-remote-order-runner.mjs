@@ -18,10 +18,13 @@ export async function runRemoteEtsyOrders({ command, client, scope, load, save, 
   let run = await load();
   if (run && (run.id !== command.id || run.scope !== scope)) throw new Error('Remote checkpoint scope or command changed');
   if (!run) {
+    await client.logProgress?.('COLLECTING_ORDERS', 'Collecting orders from Etsy', { activityStatus: 'RUNNING' });
     const orders = await collect(command.maxOrders);
+    await client.logProgress?.('ORDERS_COLLECTED', 'Etsy order collection finished', { orderCount: orders.length });
     run = createEtsyCapture(orders, { id: command.id, scope, shopId: scope.split('|')[1], limit: command.maxOrders });
     await save(run);
   }
+  else await client.logProgress?.('RESUMING', 'Resuming saved import checkpoint', { importJobId: run.jobId, activityStatus: 'RUNNING' });
   if (!run.orderCount) return { success: true, importedCount: 0, failedCount: 0 };
   if (run.status !== 'COMPLETED') await resumeEtsyImport({ run, client, scope, save, downloadFile, assertLease });
   await assertLease(run.jobId);

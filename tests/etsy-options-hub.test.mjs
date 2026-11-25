@@ -117,6 +117,7 @@ test('HEARTBEAT_NOW handler executes heartbeatOnly and returns agent info', asyn
   const heartbeatCalls = [];
 
   const ctx = vm.createContext({
+    extensionLogger: undefined,
     URL,
     Date,
     crypto: { randomUUID: () => 'uuid' },

@@ -16,7 +16,7 @@ function assertToken(value) {
   return token;
 }
 
-export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
+export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig, logger }) {
   async function request(path, body, method = 'POST', root = COMMAND_ROOT, timeoutMs) {
     const cfg = await getConfig();
     const apiBaseUrl = normalizeBaseUrl(cfg.apiBaseUrl);
@@ -71,7 +71,7 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
     return payload.data;
   }
 
-  return {
+  const client = {
     async isConfigured() {
       const cfg = await getConfig();
       try {
@@ -111,4 +111,63 @@ export function createLngWebBeCommandClient({ fetchImpl = fetch, getConfig }) {
       return request(`/${encodeURIComponent(jobId)}/etsy-customization-manifest`, { entries }, 'POST', '/api/integration/external-order-imports');
     },
   };
+  let command = {};
+  let lastProgress;
+  let lastRenewal = 0;
+  client.setCommandContext = (value) => { command = { id: value.id, type: value.type, origin: value.origin }; };
+  const emit = async (stage, message, extra = {}, failed = false) => {
+    if (!logger) return;
+    const context = { commandId: command.id, taskType: command.type || 'COMMAND', origin: command.origin, stage, ...extra };
+    try {
+      if (failed) await logger.logError(null, context, message);
+      else await logger.logInfo(message, context);
+    } catch { /* Diagnostics must not interrupt a command. */ }
+  };
+  client.logProgress = (stage, message, extra = {}) => emit(stage, message, extra);
+  for (const method of ['heartbeat', 'claimNext', 'start', 'renew', 'complete', 'uploadCsv', 'getImportProgress', 'uploadImportAsset', 'attachManifest']) {
+    const original = client[method];
+    client[method] = async (...args) => {
+      if (['start', 'renew', 'complete'].includes(method)) command = { ...command, id: args[0] };
+      if (method === 'uploadCsv') await emit('UPLOAD_STARTED', 'Uploading import data');
+      if (method === 'uploadImportAsset') await emit('ASSET_UPLOAD', 'Uploading customization asset', { importJobId: args[0] });
+      if (method === 'attachManifest') await emit('MANIFEST_ATTACH', 'Attaching customization assets', { importJobId: args[0], itemCount: args[1].length });
+      try {
+        const result = await original(...args);
+        if (method === 'claimNext' && result?.command) {
+          command = result.command; lastProgress = undefined; lastRenewal = 0;
+          await emit('CLAIMED', 'Command received', { activityStatus: 'CLAIMED' });
+        }
+        if (['start', 'renew'].includes(method)) {
+          if (result?.type) command = { ...command, type: result.type, origin: result.origin };
+          if (method === 'start') await emit('STARTED', 'Command started', { activityStatus: 'RUNNING' });
+          else if (Date.now() - lastRenewal >= 300000) {
+            lastRenewal = Date.now();
+            await emit('LEASE_RENEWED', 'Lease renewed; this does not indicate processing progress');
+          }
+        }
+        if (method === 'complete') {
+          const status = result?.status || (args[1].success ? 'SUCCEEDED' : 'FAILED');
+          await emit('COMPLETED', 'Backend acknowledged command result', { activityStatus: status, importedCount: args[1].importedCount, failedCount: args[1].failedCount }, status !== 'SUCCEEDED');
+        }
+        if (method === 'uploadCsv') await emit('IMPORT_CREATED', 'Backend accepted import', { importJobId: result?.jobId || result?.importBatchId || result?.id });
+        if (method === 'getImportProgress') {
+          const progress = { importJobId: args[0], importStatus: result?.job?.status, importedCount: result?.job?.importedCount, failedCount: result?.job?.failedCount };
+          const signature = JSON.stringify(progress);
+          if (signature !== lastProgress) { lastProgress = signature; await emit('IMPORT_PROGRESS', 'Import progress updated', progress); }
+        }
+        return result;
+      } catch (error) {
+        const connection = ['heartbeat', 'claimNext'].includes(method);
+        const leaseLost = method === 'renew' && [401, 403, 404, 409].includes(error?.status);
+        await emit('REQUEST_FAILED', `Command request failed: ${method}`, {
+          ...(connection ? { commandId: undefined, taskType: 'CONNECTION' } : {}),
+          operation: method, httpStatus: error?.status || null,
+          errorCode: /^[A-Z0-9_]{1,80}$/.test(error?.code || '') ? error.code : null,
+          activityStatus: leaseLost ? 'LEASE_LOST' : 'RETRYING',
+        }, true);
+        throw error;
+      }
+    };
+  }
+  return client;
 }

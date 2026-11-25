@@ -561,6 +561,8 @@ output {
 }
 
 .activity-run.is-failed { border-left-color: #ef4444; }
+.activity-run.is-lease_lost, .activity-run.is-partial_failed { border-left-color: #ef4444; }
+.activity-run.is-retrying { border-left-color: #f59e0b; }
 .activity-run.is-unknown { border-left-color: #f59e0b; }
 .activity-run.is-waiting_etsy { border-left-color: #ea580c; }
 .activity-run.is-succeeded { border-left-color: #10b981; }

@@ -37,6 +37,7 @@ export async function resumeEtsyImport({ run, client, scope, save, downloadFile,
     await save(run);
   }
   await assertLease(run.jobId);
+  await client.logProgress?.('WAITING_IMPORT', 'Waiting for backend import', { importJobId: run.jobId });
   run.result = await waitForEtsyImport(client, run.jobId, { sleep, assertLease });
   await save(run);
   let failedFiles = 0;
@@ -46,6 +47,7 @@ export async function resumeEtsyImport({ run, client, scope, save, downloadFile,
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           await assertLease(run.jobId);
+          await client.logProgress?.('DOWNLOADING_ASSET', 'Downloading customization asset', { importJobId: run.jobId, attempt: attempt + 1 });
           const blob = await downloadFile(file);
           if (!['image/png', 'image/jpeg', 'image/webp'].includes(blob.type) || !blob.size || blob.size > 10 * 1024 * 1024) throw Object.assign(new Error('Unsupported image type or size'), { status: 400 });
           const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))].map((n) => n.toString(16).padStart(2, '0')).join('');
@@ -58,6 +60,7 @@ export async function resumeEtsyImport({ run, client, scope, save, downloadFile,
         } catch (error) {
           if ([401, 403].includes(error.status) || error.code === 'LEASE_LOST') throw error;
           file.error = error.code || 'FILE_TRANSFER_FAILED';
+          await client.logProgress?.('ASSET_RETRY', 'Customization asset transfer failed', { importJobId: run.jobId, attempt: attempt + 1, httpStatus: error.status || null });
           if (attempt === 2 || (error.status >= 400 && error.status < 500 && error.status !== 429)) break;
           await sleep(1000 * (attempt + 1));
         }
